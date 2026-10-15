@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Heat Exchanger Control & Telemetry</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="header">
+    <h1>
+      <span>♨️ Heat Exchanger Controller</span>
+    </h1>
+    <div class="badges">
+      <span id="badgeSafety" class="badge badge-ok">NORMAL</span>
+      <span id="badgeWifi" class="badge">AP: 192.168.4.1</span>
+      <span id="badgeAi" class="badge">AI IDLE</span>
+      <button class="btn-estop" onclick="triggerEStop()">E-STOP</button>
+    </div>
+  </div>
+
+  <div class="tab-nav">
+    <button class="tab-btn active" onclick="switchTab('dashboard')">Dashboard</button>
+    <button class="tab-btn" onclick="switchTab('gemini')">Gemini AI Advisor</button>
+    <button class="tab-btn" onclick="switchTab('logging')">CSV Data Logger</button>
+    <button class="tab-btn" onclick="switchTab('settings')">Settings & WiFi</button>
+  </div>
+
+  <!-- TAB: DASHBOARD -->
+  <div id="tab-dashboard" class="tab-content active">
+    <div class="grid">
+      <!-- Temperatures Card -->
+      <div class="card">
+        <h2><span>🌡️ Temperature Probes</span> <span id="lblDeltaTh" class="val-hot">ΔTh: --°C</span></h2>
+        <div class="stat-row">
+          <span class="stat-label">Hot Inlet (Th,in):</span>
+          <span id="valThIn" class="stat-val val-hot">-- °C</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Hot Outlet (Th,out):</span>
+          <span id="valThOut" class="stat-val val-hot">-- °C</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Cold Inlet (Tc,in):</span>
+          <span id="valTcIn" class="stat-val val-cold">-- °C</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Cold Outlet (Tc,out):</span>
+          <span id="valTcOut" class="stat-val val-cold">-- °C</span>
+        </div>
+        <div class="stat-row" style="margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 8px;">
+          <span class="stat-label">Cold Heat Uptake (ΔTc):</span>
+          <span id="lblDeltaTc" class="stat-val val-cold">-- °C</span>
+        </div>
+      </div>
+
+      <!-- Thermodynamics & Flow Card -->
+      <div class="card">
+        <h2><span>⚡ Thermodynamics & Flow</span> <span id="valEff" class="val-accent">ε: --%</span></h2>
+        <div class="stat-row">
+          <span class="stat-label">Flow Rate:</span>
+          <span id="valFlow" class="stat-val val-flow">-- LPM</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Total Volume Pumped:</span>
+          <span id="valVolume" class="stat-val">-- L</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Heat Exchanged (Q_hot):</span>
+          <span id="valQHot" class="stat-val val-accent">-- kW</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Cold Absorption (Q_cold):</span>
+          <span id="valQCold" class="stat-val val-cold">-- kW</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">Log Mean Temp Diff (LMTD):</span>
+          <span id="valLmtd" class="stat-val val-warn">-- °C</span>
+        </div>
+      </div>
+
+      <!-- Pump & Heater Actuator Control -->
+      <div class="card">
+        <h2><span>⚙️ Actuator Controls</span></h2>
+        <!-- Pump -->
+        <div class="control-group">
+          <label>WATER PUMP SPEED: <span id="lblPumpPct" style="color:#fff;font-weight:bold;">0%</span></label>
+          <div class="slider-row">
+            <input type="range" id="rngPump" min="0" max="100" value="0" oninput="updatePumpSlider(this.value)" onchange="sendPumpCmd(this.value)">
+          </div>
+          <div class="btn-row">
+            <button class="btn" onclick="sendPumpCmd(0)">OFF</button>
+            <button class="btn" onclick="sendPumpCmd(50)">50%</button>
+            <button class="btn" onclick="sendPumpCmd(100)">100%</button>
+          </div>
+        </div>
+        <!-- Heater -->
+        <div class="control-group" style="margin-top: 16px; border-top: 1px dashed var(--border); padding-top: 12px;">
+          <label>30A HEATER CONTROL: <span id="lblHeaterState" style="color:#fff;font-weight:bold;">OFF</span></label>
+          <div class="stat-row">
+            <select id="selHeaterMode" onchange="sendHeaterConfig()">
+              <option value="0">MODE: OFF (Safe Lock)</option>
+              <option value="1">MODE: MANUAL ON/OFF</option>
+              <option value="2">MODE: THERMOSTATIC (Setpoint)</option>
+              <option value="3">MODE: TIME-PWM (Slow Proportional)</option>
+            </select>
+          </div>
+          <div class="btn-row" id="grpManualHeater" style="margin-top: 6px;">
+            <button class="btn btn-primary" onclick="sendHeaterManual(true)">HEATER ON</button>
+            <button class="btn" onclick="sendHeaterManual(false)">HEATER OFF</button>
+          </div>
+          <div id="grpThermostatic" style="margin-top: 8px;">
+            <label>Target Temp (°C): <span id="lblTargetTemp" style="color:#fff;">50</span>°C</label>
+            <input type="range" id="rngTargetTemp" min="20" max="72" value="50" oninput="document.getElementById('lblTargetTemp').innerText=this.value" onchange="sendHeaterConfig()">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Chart -->
+    <div class="card">
+      <h2><span>📈 Real-Time Thermal Dynamics</span> <span style="font-size:0.75rem;color:#8b949e;">Rolling 60s Profile</span></h2>
+      <canvas id="chartCanvas"></canvas>
+      <div style="display:flex;gap:16px;margin-top:8px;font-size:0.75rem;justify-content:center;flex-wrap:wrap;">
+        <span style="color:var(--hot);">■ Th,in</span>
+        <span style="color:#ff8533;">■ Th,out</span>
+        <span style="color:var(--cold);">■ Tc,in</span>
+        <span style="color:#00ffff;">■ Tc,out</span>
+        <span style="color:var(--flow);">■ Flow (LPM)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: GEMINI AI ADVISOR -->
+  <div id="tab-gemini" class="tab-content">
+    <div class="grid">
+      <div class="card">
+        <h2><span>🤖 Google Gemini AI Edge Integration</span></h2>
+        <div class="control-group">
+          <label>Google Gemini API Key:</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="txtGeminiKey" placeholder="AIzaSy...">
+            <button class="btn btn-primary" onclick="saveGeminiKey()">Save</button>
+          </div>
+        </div>
+        <div class="control-group">
+          <label>Auto-Analysis Interval:</label>
+          <select id="selAiInterval" onchange="saveAiInterval()">
+            <option value="0">Disabled (Manual Only)</option>
+            <option value="30000">Every 30 Seconds</option>
+            <option value="60000">Every 1 Minute</option>
+            <option value="120000">Every 2 Minutes</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label>
+            <input type="checkbox" id="chkAiClosedLoop" onchange="toggleAiClosedLoop()">
+            Enable Autonomous Closed-Loop Tuning (AI applies pump & heater setpoints within safety limits)
+          </label>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="triggerGeminiQuery()">Run AI Thermodynamic Analysis Now</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span>🧠 Latest AI Diagnostic Report</span> <span id="lblAiScore" class="val-accent">Score: --/100</span></h2>
+        <div class="ai-box">
+          <div id="aiAnalysisText">No AI evaluation performed yet. Connect to Station Wi-Fi with internet and click 'Run AI Analysis'.</div>
+          <div class="ai-rec" id="aiRecText"></div>
+          <div id="aiWarningText" style="color:var(--danger);margin-top:6px;"></div>
+        </div>
+        <div class="btn-row" style="margin-top:12px;">
+          <button class="btn btn-warn" id="btnApplyAi" style="display:none;" onclick="applyAiRecommendation()">Apply Suggested Setpoints</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: LOGGING -->
+  <div id="tab-logging" class="tab-content">
+    <div class="card">
+      <h2><span>💾 Experimental CSV Data Logging</span></h2>
+      <p style="font-size:0.85rem;color:#8b949e;margin-bottom:12px;">The ESP32 logs live thermodynamic measurements into a circular RAM buffer at 1 Hz.</p>
+      <div class="stat-row">
+        <span class="stat-label">Logged Samples:</span>
+        <span id="lblLogCount" class="stat-val">0 / 600</span>
+      </div>
+      <div class="btn-row" style="margin-top:16px;">
+        <button class="btn btn-primary" onclick="window.open('/api/export.csv')">Download CSV Dataset</button>
+        <button class="btn" onclick="clearLogData()">Reset Logger Buffer</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB: SETTINGS -->
+  <div id="tab-settings" class="tab-content">
+    <div class="grid">
+      <div class="card">
+        <h2><span>📶 Wi-Fi Station Configuration</span></h2>
+        <div class="control-group">
+          <label>Station Network SSID:</label>
+          <input type="text" id="txtWifiSsid" placeholder="Home or Lab Network">
+        </div>
+        <div class="control-group">
+          <label>Network Password:</label>
+          <input type="password" id="txtWifiPass" placeholder="Password">
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="saveWifiCredentials()">Connect & Save</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2><span>⚙️ Calibration & Safety Overrides</span></h2>
+        <div class="control-group">
+          <label>Flow Meter K-Factor (Hz / LPM):</label>
+          <input type="number" id="txtKFactor" step="0.1" value="7.5">
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-primary" onclick="saveCalibration()">Save Calibration</button>
+          <button class="btn btn-warn" onclick="resetSafetyTrip()">Clear Safety Alarm</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

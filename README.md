@@ -44,6 +44,44 @@ flowchart TD
 
 ---
 
+## 📁 Repository Layout
+
+```
+heat-exchanger-controller/
+├── heat_exchanger_controller.ino    # Sketch entry point
+├── compile.sh                       # CLI build script (auto-bundles web assets)
+├── upload.sh                        # Serial flash script
+├── README.md                        # Project documentation
+├── LICENSE                          # MIT License
+├── .gitignore                       # Build ignore patterns
+└── src/
+    ├── HeatExchanger.h              # Master umbrella header
+    ├── config.h                     # Hardware pins & constants
+    ├── core/
+    │   ├── SafetyManager.hpp        # Dry-fire cutoff, over-temp, E-Stop
+    │   └── Thermodynamics.hpp       # Q_hot, Q_cold, LMTD, effectiveness
+    ├── hardware/
+    │   ├── ThermalSensors.hpp       # 4x DS18B20 1-Wire async manager
+    │   ├── FlowSensor.hpp           # Hardware ISR pulse counter & filter
+    │   ├── PumpController.hpp       # L298N LEDC PWM speed control
+    │   └── HeaterController.hpp     # 30A relay control (Manual, Thermo, PWM)
+    ├── network/
+    │   ├── NetworkManager.hpp       # Dual AP + STA Wi-Fi & mDNS
+    │   ├── GeminiClient.hpp         # Direct HTTPS Google Gemini AI client
+    │   ├── WebServerManager.hpp     # REST API & telemetry endpoints
+    │   └── web_dashboard.hpp        # Generated Flash PROGMEM dashboard
+    ├── ui/
+    │   ├── LcdManager.hpp           # 16x2 I2C display carousel & alarms
+    │   └── DataLogger.hpp           # CSV circular buffer logger
+    └── web/
+        ├── index.html               # Semantic HTML5 UI layout
+        ├── style.css                # Industrial dark-mode CSS styles
+        ├── app.js                   # Client-side JavaScript logic & Canvas charts
+        └── bundle.py                # Inlines HTML/CSS/JS into web_dashboard.hpp
+```
+
+---
+
 ## ⚡ Hardware Pinout Mapping
 
 | ESP32 GPIO | Peripheral | Signal Function | Electrical Notes |

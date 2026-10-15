@@ -1,16 +1,5 @@
 #include <Arduino.h>
-#include "config.h"
-#include "SafetyManager.h"
-#include "Thermodynamics.h"
-#include "ThermalSensors.h"
-#include "FlowSensor.h"
-#include "PumpController.h"
-#include "HeaterController.h"
-#include "LcdManager.h"
-#include "NetworkManager.h"
-#include "GeminiClient.h"
-#include "DataLogger.h"
-#include "WebServerManager.h"
+#include "src/HeatExchanger.h"
 
 // Task scheduling timestamps
 static uint32_t lastFastTick = 0;   // 100ms (10 Hz)

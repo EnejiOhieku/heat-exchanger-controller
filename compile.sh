@@ -16,6 +16,9 @@ fi
 SKETCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FQBN="esp32:esp32:esp32da"
 
+echo "=== Bundling Web Assets ==="
+python3 "$SKETCH_DIR/src/web/bundle.py"
+
 echo "=== Compiling Heat Exchanger Controller ==="
 echo "Tool: $ARDUINO_CLI"
 echo "Board: $FQBN"

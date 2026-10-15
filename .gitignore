@@ -1,0 +1,19 @@
+# Build and temporary files
+build/
+*.bin
+*.elf
+*.hex
+*.map
+*.o
+*.d
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Arduino CLI build cache
+*.arduino.tmp/

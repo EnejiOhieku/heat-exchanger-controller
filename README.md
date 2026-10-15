@@ -5,7 +5,7 @@
 [![Gemini](https://img.shields.io/badge/AI-Google%20Gemini%202.0%20Flash-orange.svg)](https://deepmind.google/technologies/gemini/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-An industrial-grade embedded control, telemetry, and thermodynamic analysis system for a liquid-to-liquid heat exchanger rig powered by an **ESP32 DevKitC**.
+A mini industrial-grade embedded control, telemetry, and thermodynamic analysis system for a liquid-to-liquid heat exchanger rig powered by an **ESP32 DevKitC**.
 
 Featuring a **30A relay heater** with hard zero-flow dry-fire prevention, an **L298N dual H-bridge motor driver** for variable water pump speed, **4x DS18B20 digital temperature sensors** on 1-Wire, a **pulse-interrupt flow meter**, an **I2C 16x2 LCD display**, a **Dual AP+Station web dashboard** with real-time live canvas charts, in-memory CSV logging, and direct edge integration with **Google Gemini 2.0 Flash AI** for autonomous optimization.
 

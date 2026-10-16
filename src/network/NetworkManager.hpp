@@ -6,9 +6,9 @@
 #include <Preferences.h>
 #include "../config.h"
 
-class NetworkManager {
+class HXNetworkManager {
 public:
-    NetworkManager()
+    HXNetworkManager()
         : _staConnecting(false),
           _staConnectStartTime(0),
           _lastReconnectCheck(0) {}
@@ -132,4 +132,4 @@ private:
     uint32_t _lastReconnectCheck;
 };
 
-inline NetworkManager Network;
+inline HXNetworkManager NetManager;

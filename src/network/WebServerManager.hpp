@@ -76,9 +76,9 @@ private:
         doc["safety_error"] = Safety.getErrorString();
         doc["safety_code"] = (uint8_t)Safety.getError();
 
-        doc["sta_connected"] = Network.isStaConnected();
-        doc["sta_ip"] = Network.getStaIP();
-        doc["ap_ip"] = Network.getApIP();
+        doc["sta_connected"] = NetManager.isStaConnected();
+        doc["sta_ip"] = NetManager.getStaIP();
+        doc["ap_ip"] = NetManager.getApIP();
 
         doc["log_count"] = Logger.getCount();
         doc["log_capacity"] = Logger.getCapacity();
@@ -165,7 +165,7 @@ private:
         if (doc["wifi_ssid"].is<const char*>()) {
             const char* ssid = doc["wifi_ssid"].as<const char*>();
             const char* pass = doc["wifi_pass"] | "";
-            Network.setStaCredentials(ssid, pass);
+            NetManager.setStaCredentials(ssid, pass);
         }
 
         if (doc["flow_k_factor"].is<float>()) {

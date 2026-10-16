@@ -17,7 +17,7 @@ public:
 
     void init();
 
-    void IRAM_ATTR handlePulse() {
+    void handlePulse() {
         uint32_t now = micros();
         if (now - _lastPulseTimeMicros >= 500) {
             _pulseCount++;
@@ -79,7 +79,7 @@ private:
 
 inline FlowSensor Flow;
 
-inline void IRAM_ATTR flowSensorISR() {
+inline void flowSensorISR() {
     Flow.handlePulse();
 }
 

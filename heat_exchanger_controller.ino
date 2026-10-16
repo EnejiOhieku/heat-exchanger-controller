@@ -25,7 +25,7 @@ void setup() {
     Sensors.init();
     Display.init();
     Logger.init();
-    Network.init();
+    NetManager.init();
     Gemini.init();
     Web.init();
 
@@ -43,7 +43,7 @@ void loop() {
     Pump.update();
 
     // 3. Network background state
-    Network.update();
+    NetManager.update();
 
     // 4. Fast Loop (10 Hz / 100 ms): Flow calculations & Safety interlocks
     if (now - lastFastTick >= 100) {
@@ -68,7 +68,7 @@ void loop() {
     // 5. Display Refresh Loop (4 Hz / 250 ms)
     if (now - lastLcdTick >= 250) {
         lastLcdTick = now;
-        String ipStr = Network.getActiveIP();
+        String ipStr = NetManager.getActiveIP();
         Display.update(Thermo.getData(), Heater.isRelayEnergized(), Pump.getSpeedPercent(), ipStr.c_str());
     }
 

@@ -71,7 +71,7 @@ public:
     const char* getLastError() const { return _lastError; }
 
     void update(const ThermodynamicData& data, uint8_t currentPumpPct, bool heaterOn, float targetTemp) {
-        if (!_autoAnalysis || !hasApiKey() || !Network.isStaConnected() || _isBusy) {
+        if (!_autoAnalysis || !hasApiKey() || !NetManager.isStaConnected() || _isBusy) {
             return;
         }
 
@@ -87,7 +87,7 @@ public:
             snprintf(_lastError, sizeof(_lastError), "Gemini API key is not set");
             return false;
         }
-        if (!Network.isStaConnected()) {
+        if (!NetManager.isStaConnected()) {
             snprintf(_lastError, sizeof(_lastError), "Wi-Fi Station is not connected to Internet");
             return false;
         }

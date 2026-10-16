@@ -61,8 +61,7 @@
 // ==============================================================================
 #define GEMINI_API_HOST               "generativelanguage.googleapis.com"
 #define GEMINI_API_PORT               443
-#define GEMINI_MODEL                  "gemini-2.0-flash"
-#define GEMINI_ENDPOINT_BASE          "/v1beta/models/gemini-2.0-flash:generateContent?key="
+#define DEFAULT_GEMINI_MODEL          "gemini-2.0-flash"
 #define DEFAULT_GEMINI_INTERVAL_MS    30000   // 30-second periodic analysis if auto-enabled
 
 // ==============================================================================

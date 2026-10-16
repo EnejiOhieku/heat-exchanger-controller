@@ -84,6 +84,10 @@ private:
         doc["log_capacity"] = Logger.getCapacity();
 
         JsonObject aiObj = doc["ai"].to<JsonObject>();
+        aiObj["model"] = Gemini.getModel();
+        aiObj["has_key"] = Gemini.hasApiKey();
+        aiObj["auto_enabled"] = Gemini.isAutoAnalysisEnabled();
+        aiObj["closed_loop"] = Gemini.isAutonomousControlEnabled();
         aiObj["has_rec"] = ai.hasValidRecommendation;
         if (ai.hasValidRecommendation) {
             aiObj["analysis"] = ai.analysis;
@@ -190,6 +194,10 @@ private:
 
         if (doc["api_key"].is<const char*>()) {
             Gemini.setApiKey(doc["api_key"].as<const char*>());
+        }
+
+        if (doc["model"].is<const char*>()) {
+            Gemini.setModel(doc["model"].as<const char*>());
         }
 
         if (doc["auto_interval_ms"].is<int>()) {

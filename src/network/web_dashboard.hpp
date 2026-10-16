@@ -414,11 +414,20 @@ canvas {
       <div class="card">
         <h2><span>🤖 Google Gemini AI Edge Integration</span></h2>
         <div class="control-group">
-          <label>Google Gemini API Key:</label>
+          <label>Google Gemini API Key: <span id="lblKeyStatus" style="font-size:0.75rem;color:var(--safe);"></span></label>
           <div style="display:flex;gap:8px;">
-            <input type="text" id="txtGeminiKey" placeholder="AIzaSy...">
-            <button class="btn btn-primary" onclick="saveGeminiKey()">Save</button>
+            <input type="password" id="txtGeminiKey" placeholder="AIzaSy...">
+            <button class="btn btn-primary" onclick="saveGeminiKey()">Save Key</button>
           </div>
+        </div>
+        <div class="control-group">
+          <label>Gemini AI Model:</label>
+          <select id="selAiModel" onchange="saveAiModel()">
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash (Low Latency ~1s - Recommended)</option>
+            <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Thermodynamic Reasoning)</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro (High Accuracy Analytical Model)</option>
+            <option value="gemini-1.5-flash">Gemini 1.5 Flash (Lightweight Telemetry)</option>
+          </select>
         </div>
         <div class="control-group">
           <label>Auto-Analysis Interval:</label>
@@ -565,11 +574,25 @@ function resetSafetyTrip() {
 
 function saveGeminiKey() {
   const key = document.getElementById('txtGeminiKey').value;
+  if (!key) return;
   fetch('/api/ai/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api_key: key })
-  }).then(() => alert('Gemini API Key Saved!'));
+  }).then(() => {
+    alert('Gemini API Key Saved to Flash!');
+    document.getElementById('txtGeminiKey').value = '';
+    pollTelemetry();
+  });
+}
+
+function saveAiModel() {
+  const model = document.getElementById('selAiModel').value;
+  fetch('/api/ai/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: model })
+  }).then(() => alert('Gemini Model updated to: ' + model));
 }
 
 function saveAiInterval() {
@@ -675,14 +698,30 @@ function pollTelemetry() {
       document.getElementById('lblLogCount').innerText = d.log_count + ' / ' + d.log_capacity;
 
       // AI Card
-      if (d.ai && d.ai.has_rec) {
-        currentRec = d.ai;
-        document.getElementById('badgeAi').innerText = 'AI: ' + d.ai.suggested_action;
-        document.getElementById('lblAiScore').innerText = 'Score: ' + Math.round(d.ai.efficiency_score) + '/100';
-        document.getElementById('aiAnalysisText').innerText = d.ai.analysis;
-        document.getElementById('aiRecText').innerText = 'Recommendation: Pump ' + d.ai.recommended_pump_pwm + '%, Heater ' + d.ai.recommended_heater_duty + '% (' + d.ai.suggested_action + ')';
-        document.getElementById('aiWarningText').innerText = (d.ai.safety_warning && d.ai.safety_warning !== 'NONE') ? ('⚠️ ' + d.ai.safety_warning) : '';
-        document.getElementById('btnApplyAi').style.display = 'inline-block';
+      if (d.ai) {
+        if (d.ai.model && document.activeElement !== document.getElementById('selAiModel')) {
+          document.getElementById('selAiModel').value = d.ai.model;
+        }
+        const lblKey = document.getElementById('lblKeyStatus');
+        if (lblKey) {
+          if (d.ai.has_key) {
+            lblKey.innerText = '✓ Key Configured';
+            lblKey.style.color = 'var(--safe)';
+          } else {
+            lblKey.innerText = '⚠ Key Not Set';
+            lblKey.style.color = 'var(--danger)';
+          }
+        }
+
+        if (d.ai.has_rec) {
+          currentRec = d.ai;
+          document.getElementById('badgeAi').innerText = 'AI: ' + d.ai.suggested_action;
+          document.getElementById('lblAiScore').innerText = 'Score: ' + Math.round(d.ai.efficiency_score) + '/100';
+          document.getElementById('aiAnalysisText').innerText = d.ai.analysis;
+          document.getElementById('aiRecText').innerText = 'Recommendation: Pump ' + d.ai.recommended_pump_pwm + '%, Heater ' + d.ai.recommended_heater_duty + '% (' + d.ai.suggested_action + ')';
+          document.getElementById('aiWarningText').innerText = (d.ai.safety_warning && d.ai.safety_warning !== 'NONE') ? ('⚠️ ' + d.ai.safety_warning) : '';
+          document.getElementById('btnApplyAi').style.display = 'inline-block';
+        }
       }
 
       // Append to chart history (keep 60 points)

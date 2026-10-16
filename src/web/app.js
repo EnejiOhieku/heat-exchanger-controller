@@ -60,11 +60,25 @@ function resetSafetyTrip() {
 
 function saveGeminiKey() {
   const key = document.getElementById('txtGeminiKey').value;
+  if (!key) return;
   fetch('/api/ai/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api_key: key })
-  }).then(() => alert('Gemini API Key Saved!'));
+  }).then(() => {
+    alert('Gemini API Key Saved to Flash!');
+    document.getElementById('txtGeminiKey').value = '';
+    pollTelemetry();
+  });
+}
+
+function saveAiModel() {
+  const model = document.getElementById('selAiModel').value;
+  fetch('/api/ai/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: model })
+  }).then(() => alert('Gemini Model updated to: ' + model));
 }
 
 function saveAiInterval() {
@@ -170,14 +184,30 @@ function pollTelemetry() {
       document.getElementById('lblLogCount').innerText = d.log_count + ' / ' + d.log_capacity;
 
       // AI Card
-      if (d.ai && d.ai.has_rec) {
-        currentRec = d.ai;
-        document.getElementById('badgeAi').innerText = 'AI: ' + d.ai.suggested_action;
-        document.getElementById('lblAiScore').innerText = 'Score: ' + Math.round(d.ai.efficiency_score) + '/100';
-        document.getElementById('aiAnalysisText').innerText = d.ai.analysis;
-        document.getElementById('aiRecText').innerText = 'Recommendation: Pump ' + d.ai.recommended_pump_pwm + '%, Heater ' + d.ai.recommended_heater_duty + '% (' + d.ai.suggested_action + ')';
-        document.getElementById('aiWarningText').innerText = (d.ai.safety_warning && d.ai.safety_warning !== 'NONE') ? ('⚠️ ' + d.ai.safety_warning) : '';
-        document.getElementById('btnApplyAi').style.display = 'inline-block';
+      if (d.ai) {
+        if (d.ai.model && document.activeElement !== document.getElementById('selAiModel')) {
+          document.getElementById('selAiModel').value = d.ai.model;
+        }
+        const lblKey = document.getElementById('lblKeyStatus');
+        if (lblKey) {
+          if (d.ai.has_key) {
+            lblKey.innerText = '✓ Key Configured';
+            lblKey.style.color = 'var(--safe)';
+          } else {
+            lblKey.innerText = '⚠ Key Not Set';
+            lblKey.style.color = 'var(--danger)';
+          }
+        }
+
+        if (d.ai.has_rec) {
+          currentRec = d.ai;
+          document.getElementById('badgeAi').innerText = 'AI: ' + d.ai.suggested_action;
+          document.getElementById('lblAiScore').innerText = 'Score: ' + Math.round(d.ai.efficiency_score) + '/100';
+          document.getElementById('aiAnalysisText').innerText = d.ai.analysis;
+          document.getElementById('aiRecText').innerText = 'Recommendation: Pump ' + d.ai.recommended_pump_pwm + '%, Heater ' + d.ai.recommended_heater_duty + '% (' + d.ai.suggested_action + ')';
+          document.getElementById('aiWarningText').innerText = (d.ai.safety_warning && d.ai.safety_warning !== 'NONE') ? ('⚠️ ' + d.ai.safety_warning) : '';
+          document.getElementById('btnApplyAi').style.display = 'inline-block';
+        }
       }
 
       // Append to chart history (keep 60 points)

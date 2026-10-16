@@ -137,11 +137,20 @@
       <div class="card">
         <h2><span>🤖 Google Gemini AI Edge Integration</span></h2>
         <div class="control-group">
-          <label>Google Gemini API Key:</label>
+          <label>Google Gemini API Key: <span id="lblKeyStatus" style="font-size:0.75rem;color:var(--safe);"></span></label>
           <div style="display:flex;gap:8px;">
-            <input type="text" id="txtGeminiKey" placeholder="AIzaSy...">
-            <button class="btn btn-primary" onclick="saveGeminiKey()">Save</button>
+            <input type="password" id="txtGeminiKey" placeholder="AIzaSy...">
+            <button class="btn btn-primary" onclick="saveGeminiKey()">Save Key</button>
           </div>
+        </div>
+        <div class="control-group">
+          <label>Gemini AI Model:</label>
+          <select id="selAiModel" onchange="saveAiModel()">
+            <option value="gemini-2.0-flash">Gemini 2.0 Flash (Low Latency ~1s - Recommended)</option>
+            <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Thermodynamic Reasoning)</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro (High Accuracy Analytical Model)</option>
+            <option value="gemini-1.5-flash">Gemini 1.5 Flash (Lightweight Telemetry)</option>
+          </select>
         </div>
         <div class="control-group">
           <label>Auto-Analysis Interval:</label>

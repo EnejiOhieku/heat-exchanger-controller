@@ -38,10 +38,12 @@ public:
     void init() {
         _prefs.begin("hx_ai", false);
         _apiKey = _prefs.getString("key", "");
+        _model = _prefs.getString("model", DEFAULT_GEMINI_MODEL);
         _autoAnalysis = _prefs.getBool("auto", false);
         _autonomousControl = _prefs.getBool("ctrl", false);
 
-        Serial.printf("[Gemini] Initialized. API Key: %s, Auto-Analysis: %s, Closed-Loop: %s\n",
+        Serial.printf("[Gemini] Initialized. Model: %s, API Key: %s, Auto-Analysis: %s, Closed-Loop: %s\n",
+                      _model.c_str(),
                       _apiKey.length() > 0 ? "CONFIGURED" : "NOT SET",
                       _autoAnalysis ? "YES" : "NO",
                       _autonomousControl ? "YES" : "NO");
@@ -53,6 +55,15 @@ public:
     }
     String getApiKey() const { return _apiKey; }
     bool hasApiKey() const { return _apiKey.length() > 10; }
+
+    void setModel(const char* model) {
+        if (model && strlen(model) > 0) {
+            _model = model;
+            _prefs.putString("model", _model);
+            Serial.printf("[Gemini] Model updated to: %s\n", _model.c_str());
+        }
+    }
+    String getModel() const { return _model; }
 
     void setAutoAnalysis(bool enabled, uint32_t intervalMs = DEFAULT_GEMINI_INTERVAL_MS) {
         _autoAnalysis = enabled;
@@ -135,9 +146,9 @@ private:
     bool sendRequest(const String& promptText, String& responseJson) {
         WiFiClientSecure client;
         client.setInsecure();
-        client.setTimeout(10000);
+        client.setTimeout(15000);
 
-        Serial.printf("[Gemini] Connecting to %s:%d...\n", GEMINI_API_HOST, GEMINI_API_PORT);
+        Serial.printf("[Gemini] Connecting to %s:%d (Model: %s)...\n", GEMINI_API_HOST, GEMINI_API_PORT, _model.c_str());
         if (!client.connect(GEMINI_API_HOST, GEMINI_API_PORT)) {
             snprintf(_lastError, sizeof(_lastError), "Connection to Gemini host failed");
             Serial.println("[Gemini] Connection failed!");
@@ -152,7 +163,7 @@ private:
         String requestBody;
         serializeJson(doc, requestBody);
 
-        String path = String(GEMINI_ENDPOINT_BASE) + _apiKey;
+        String path = "/v1beta/models/" + _model + ":generateContent?key=" + _apiKey;
 
         client.print("POST " + path + " HTTP/1.1\r\n");
         client.print("Host: " + String(GEMINI_API_HOST) + "\r\n");
@@ -241,6 +252,7 @@ private:
 
     Preferences _prefs;
     String _apiKey;
+    String _model;
     bool _autoAnalysis;
     uint32_t _analysisIntervalMs;
     uint32_t _lastQueryTime;

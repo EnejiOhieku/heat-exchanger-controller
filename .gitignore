@@ -1,19 +1,41 @@
-# Build and temporary files
+# ========================================================
+# ESP32 Heat Exchanger Controller - Git Ignore Rules
+# ========================================================
+
+# Build output directory
 build/
+/build/
+
+# Compiled binaries, firmware images, and debug symbols
 *.bin
 *.elf
 *.hex
 *.map
 *.o
 *.d
+*.a
 
-# IDE & Editor files
+# Arduino CLI temporary files, caches, and options
+*.arduino.tmp/
+.cache/
+includes.cache
+build.options.json
+file_opts
+flash_args
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Editor, OS, and IDE metadata
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+*.bak
 .DS_Store
-
-# Arduino CLI build cache
-*.arduino.tmp/
+Thumbs.db

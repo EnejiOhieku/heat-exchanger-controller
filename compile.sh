@@ -31,7 +31,10 @@ on_error() {
 
 START_TIME=$(date +%s)
 SKETCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="$SKETCH_DIR/build"
 FQBN="esp32:esp32:esp32da"
+
+mkdir -p "$BUILD_DIR"
 
 echo -e "${CLR_MAGENTA}${CLR_BOLD}======================================================${CLR_RESET}"
 echo -e "${CLR_MAGENTA}${CLR_BOLD}   ESP32 Heat Exchanger Controller - Build System     ${CLR_RESET}"
@@ -39,6 +42,7 @@ echo -e "${CLR_MAGENTA}${CLR_BOLD}==============================================
 echo -e "Started: $(date '+%Y-%m-%d %H:%M:%S')"
 echo -e "Sketch:  ${CLR_BOLD}$SKETCH_DIR${CLR_RESET}"
 echo -e "Target:  ${CLR_BOLD}$FQBN (ESP32 DevKitC)${CLR_RESET}"
+echo -e "Output:  ${CLR_BOLD}$BUILD_DIR${CLR_RESET}"
 
 # Step 1: Toolchain & Environment Verification
 log_step "1/4" "Verifying toolchain and build environment..."
@@ -86,8 +90,8 @@ else
 fi
 
 # Step 3: Compilation
-log_step "3/4" "Compiling sketch and library sources..."
-BUILD_CMD=("$ARDUINO_CLI" compile --fqbn "$FQBN" "$SKETCH_DIR")
+log_step "3/4" "Compiling sketch and library sources to build directory..."
+BUILD_CMD=("$ARDUINO_CLI" compile --fqbn "$FQBN" --build-path "$BUILD_DIR" "$SKETCH_DIR")
 
 # Append user flags or extra args
 if [ $# -gt 0 ]; then
@@ -105,7 +109,7 @@ if [ "$BUILD_STATUS" -ne 0 ]; then
 fi
 
 # Step 4: Build Analysis & Memory Report
-log_step "4/4" "Analyzing binary footprint and memory usage..."
+log_step "4/4" "Analyzing binary footprint and artifacts..."
 
 FLASH_LINE=$(grep -E "Sketch uses|program storage space" "$TMP_LOG" | tail -n1 || true)
 RAM_LINE=$(grep -E "Global variables use|dynamic memory" "$TMP_LOG" | tail -n1 || true)
@@ -117,6 +121,15 @@ fi
 if [ -n "$RAM_LINE" ]; then
     echo -e "  ${CLR_CYAN}RAM   (Dynamic Memory): ${CLR_RESET} $RAM_LINE"
 fi
+
+echo -e "\n  ${CLR_BOLD}Generated Artifacts in $BUILD_DIR:${CLR_RESET}"
+for f in "$BUILD_DIR"/*.bin "$BUILD_DIR"/*.elf; do
+    if [ -f "$f" ]; then
+        FNAME=$(basename "$f")
+        FSIZE=$(stat -c%s "$f" 2>/dev/null || wc -c < "$f")
+        printf "    %-42s %8s bytes\n" "$FNAME" "$FSIZE"
+    fi
+done
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))

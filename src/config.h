@@ -10,10 +10,10 @@
 #define PIN_ONEWIRE_BUS      4
 #define PIN_FLOW_SENSOR      27
 #define PIN_RELAY_HEATER     25
-#define PIN_PUMP_ENA         18
-#define PIN_PUMP_IN1         19
-#define PIN_PUMP_IN2         23
+#define PIN_PUMP_IN1         19      // Motor Driver PWM Input 1 (Forward PWM)
+#define PIN_PUMP_IN2         23      // Motor Driver PWM Input 2 (Reverse PWM / Held LOW)
 #define PIN_STATUS_LED       2
+// Note: GPIO 18 (formerly PIN_PUMP_ENA) is now unassigned and available for expansion.
 
 // ==============================================================================
 // THERMODYNAMIC CONSTANTS
@@ -42,9 +42,11 @@
 // ACTUATOR SETTINGS
 // ==============================================================================
 #define RELAY_ACTIVE_LEVEL            HIGH    // Set to HIGH if HIGH turns relay ON, LOW if active-low
-#define PUMP_PWM_FREQ                 5000    // 5 kHz PWM
+#define PUMP_PWM_FREQ                 5000    // 5 kHz PWM (audible noise suppression & motor efficiency)
 #define PUMP_PWM_RES                  8       // 8-bit resolution (0 - 255)
-#define PUMP_PWM_CHANNEL              0       // ESP32 LEDC channel
+#define PUMP_PWM_CHANNEL_1            0       // ESP32 LEDC channel for IN1 (Core v2 fallback)
+#define PUMP_PWM_CHANNEL_2            1       // ESP32 LEDC channel for IN2 (Core v2 fallback)
+#define PUMP_INVERT_ROTATION          false   // Set true to swap IN1/IN2 if physical pump rotates backwards
 #define HEATER_CYCLE_WINDOW_MS        5000    // 5-second slow-cycle time-proportional PWM window
 
 // ==============================================================================

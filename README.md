@@ -7,7 +7,7 @@
 
 A mini industrial-grade embedded control, telemetry, and thermodynamic analysis system for a liquid-to-liquid heat exchanger rig powered by an **ESP32 DevKitC**.
 
-Featuring a **30A relay heater** with hard zero-flow dry-fire prevention, an **L298N dual H-bridge motor driver** for variable water pump speed, **4x DS18B20 digital temperature sensors** on 1-Wire, a **pulse-interrupt flow meter**, an **I2C 16x2 LCD display**, a **Dual AP+Station web dashboard** with real-time live canvas charts, in-memory CSV logging, and direct edge integration with **Google Gemini 2.0 Flash AI** for autonomous optimization.
+Featuring a **30A relay heater** with hard zero-flow dry-fire prevention, a **2-PWM H-bridge motor driver** (IN1/IN2 dual PWM, no enable) for variable water pump speed, **4x DS18B20 digital temperature sensors** on 1-Wire, a **pulse-interrupt flow meter**, an **I2C 16x2 LCD display**, a **Dual AP+Station web dashboard** with real-time live canvas charts, in-memory CSV logging, and direct edge integration with **Google Gemini 2.0 Flash AI** for autonomous optimization.
 
 ---
 
@@ -26,7 +26,7 @@ flowchart TD
 
     subgraph Actuators ["Actuator Layer"]
         ESP -- "GPIO 25 (Digital)" --> RELAY["30A Relay Module"] --> HEATER["Electric Heater"]
-        ESP -- "GPIO 18 (PWM), 19, 23 (DIR)" --> L298N["L298N Motor Driver"] --> PUMP["DC Water Pump"]
+        ESP -- "GPIO 19, 23 (2-PWM)" --> DRV["2-PWM Motor Driver"] --> PUMP["DC Water Pump"]
     end
 
     subgraph Interface ["Local & Remote UI"]
@@ -63,7 +63,7 @@ heat-exchanger-controller/
     ├── hardware/
     │   ├── ThermalSensors.hpp       # 4x DS18B20 1-Wire async manager
     │   ├── FlowSensor.hpp           # Hardware ISR pulse counter & filter
-    │   ├── PumpController.hpp       # L298N LEDC PWM speed control
+    │   ├── PumpController.hpp       # 2-PWM LEDC speed control (no enable)
     │   └── HeaterController.hpp     # 30A relay control (Manual, Thermo, PWM)
     ├── network/
     │   ├── NetworkManager.hpp       # Dual AP + STA Wi-Fi & mDNS
@@ -91,12 +91,12 @@ heat-exchanger-controller/
 | **GPIO 4** | 4x DS18B20 Probes | 1-Wire Bus | 4.7kΩ pull-up resistor to 3.3V |
 | **GPIO 27** | Flow Meter | Pulse Input | Hardware interrupt (via 5V->3.3V divider) |
 | **GPIO 25** | 30A Relay (Heater) | Control Signal | Low at boot, active logic configurable |
-| **GPIO 18** | L298N Motor Driver | ENA (PWM) | ESP32 LEDC PWM channel 0 (5 kHz) |
-| **GPIO 19** | L298N Motor Driver | IN1 (Direction) | Forward enable |
-| **GPIO 23** | L298N Motor Driver | IN2 (Direction) | Held LOW for single-direction pump |
+| **GPIO 18** | Unassigned / Free | Expansion Pin | Formerly ENA; freed by 2-PWM driver migration |
+| **GPIO 19** | Motor Driver | IN1 (PWM 1) | ESP32 LEDC hardware PWM (5 kHz forward drive) |
+| **GPIO 23** | Motor Driver | IN2 (PWM 2) | ESP32 LEDC hardware PWM (5 kHz reverse / held LOW) |
 | **GPIO 2** | Built-in Blue LED | Status Heartbeat | 1 Hz normal, 5 Hz on safety trip |
 | **VIN / 5V** | Power Rail | 5V DC Bus | From regulated 5V power supply |
-| **GND** | System Ground | Common Ground | Common to ESP32, L298N, Relay, Sensors |
+| **GND** | System Ground | Common Ground | Common to ESP32, Motor Driver, Relay, Sensors |
 
 ---
 

@@ -118,6 +118,373 @@
   var chatRev = 0, chatMsgs = [];
 
   // =====================================================================
+  // Gemini (browser -> Google directly; key stays in localStorage)
+  // =====================================================================
+  var AI_STORE = 'hx_sim_ai';
+  var ai = {
+    key: '', model: 'gemini-3.6-flash', auto: false, interval: 60000,
+    closed: false, chatAuto: false,
+    busy: false, phase: '', lastError: 'OK', latency: 0, requests: 0, errors: 0,
+    lastAuto: now(), seq: 0, rec: null
+  };
+  var appliedSeq = 0;
+
+  function loadAi() {
+    try {
+      var s = JSON.parse(localStorage.getItem(AI_STORE) || '{}');
+      if (typeof s.key === 'string') ai.key = s.key;
+      if (typeof s.model === 'string' && s.model) ai.model = s.model;
+      ai.auto = !!s.auto;
+      ai.closed = !!s.closed;
+      ai.chatAuto = !!s.chatAuto;
+      if (typeof s.interval === 'number' && s.interval > 0) ai.interval = s.interval;
+    } catch (e) { /* localStorage unavailable */ }
+  }
+  function saveAi() {
+    try {
+      localStorage.setItem(AI_STORE, JSON.stringify({
+        key: ai.key, model: ai.model, auto: ai.auto, interval: ai.interval,
+        closed: ai.closed, chatAuto: ai.chatAuto
+      }));
+    } catch (e) { /* ignore */ }
+  }
+  loadAi();
+
+  function aiHasKey() { return ai.key.length >= 20; }
+
+  var ANALYSIS_PROMPT =
+    'You are a thermal process engineer supervising a small liquid-to-liquid counter-flow heat exchanger ' +
+    'test rig (browser simulation). A relay-switched electric heater warms a hot loop driven by one pump; a ' +
+    'second pump drives the cold loop. Using only the telemetry given, assess heat transfer (Q, LMTD, UA, ' +
+    'effectiveness, heat balance), spot anomalies, and recommend hot-pump %, cold-pump % and heater duty %. ' +
+    'Keep analysis under 60 words. safety_warning is NONE unless there is a concrete risk.';
+
+  var CHAT_PROMPT =
+    'You are the operator assistant for an ESP32-style heat exchanger test rig running in a browser ' +
+    'simulator. Answer briefly from the LIVE TELEMETRY block; never invent readings. If the operator asks ' +
+    'to change the system, put the changes in `commands` using only these actions: set_pump_pct (value ' +
+    '0-100), set_flow_setpoint (value L/min 0-30), pump_stop, set_cold_pump_pct (value 0-100), ' +
+    'set_cold_flow_setpoint (value L/min 0-30), cold_pump_stop, set_heater_mode (arg: off, manual, ' +
+    'thermostatic, time_pwm, pid), set_heater_manual (arg on/off; heater must already be in manual mode), ' +
+    'set_target_temp (value C 10-73), set_heater_duty (value 0-100, time_pwm mode), estop, clear_log. To ' +
+    'heat to a temperature, prefer pid mode with set_target_temp and make sure the pumps are running. ' +
+    'Questions only => empty commands. Plain text, no markdown, under 100 words.';
+
+  var ANALYSIS_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      analysis: { type: 'STRING' },
+      efficiency_score: { type: 'NUMBER' },
+      recommended_pump_pct: { type: 'INTEGER' },
+      recommended_cold_pump_pct: { type: 'INTEGER' },
+      recommended_heater_duty: { type: 'INTEGER' },
+      safety_warning: { type: 'STRING' },
+      action: { type: 'STRING', enum: ['MAINTAIN', 'INCREASE_FLOW', 'DECREASE_FLOW', 'INCREASE_HEAT', 'DECREASE_HEAT'] }
+    },
+    required: ['analysis', 'efficiency_score', 'recommended_pump_pct', 'recommended_heater_duty', 'safety_warning', 'action']
+  };
+  var CHAT_SCHEMA = {
+    type: 'OBJECT',
+    properties: {
+      reply: { type: 'STRING' },
+      commands: {
+        type: 'ARRAY',
+        items: {
+          type: 'OBJECT',
+          properties: {
+            action: {
+              type: 'STRING',
+              enum: ['set_pump_pct', 'set_flow_setpoint', 'pump_stop', 'set_cold_pump_pct',
+                     'set_cold_flow_setpoint', 'cold_pump_stop', 'set_heater_mode', 'set_heater_manual',
+                     'set_target_temp', 'set_heater_duty', 'estop', 'clear_log']
+            },
+            value: { type: 'NUMBER' },
+            arg: { type: 'STRING' }
+          },
+          required: ['action']
+        }
+      }
+    },
+    required: ['reply', 'commands']
+  };
+
+  function aiContext() {
+    var d = thermo;
+    var f = function (v, n) { return v.toFixed(n == null ? 2 : n); };
+    return [
+      'source=SIMULATION (browser virtual plant, no hardware)',
+      'Th_in=' + f(d.thIn) + ' Th_out=' + f(d.thOut) + ' Tc_in=' + f(d.tcIn) + ' Tc_out=' + f(d.tcOut) + ' C',
+      'flow_hot=' + f(plant.flowHot) + ' L/min  flow_cold=' + f(plant.flowCold) + ' L/min  Q_hot=' +
+        f(d.qHot, 0) + ' W  Q_cold=' + f(d.qCold, 0) + ' W  heat_balance=' + f(d.balance, 0) + '%',
+      'LMTD=' + f(d.lmtd) + ' C  UA=' + f(d.ua, 1) + ' W/K  effectiveness=' + f(d.eff, 1) + '%',
+      'pump_hot: mode=' + (pump.mode ? 'flow_control' : 'manual') + ' speed=' + Math.round(pump.cur) +
+        '% target=' + Math.round(pump.target) + '% flow_setpoint=' + f(pump.flowSp),
+      'pump_cold: mode=' + (pumpCold.mode ? 'flow_control' : 'manual') + ' speed=' + Math.round(pumpCold.cur) +
+        '% target=' + Math.round(pumpCold.target) + '% flow_setpoint=' + f(pumpCold.flowSp),
+      'heater: mode=' + ['OFF', 'MAN', 'THR', 'TPW', 'PID'][heater.mode] + ' relay=' +
+        (heater.relay ? 'ON' : 'OFF') + ' demand=' + (heater.demand ? 'yes' : 'no') + ' duty=' +
+        currentDuty().toFixed(0) + '% setpoint=' + heater.target.toFixed(1) + ' C control_probe=' +
+        PROBE_NAMES[heater.controlProbe],
+      'safety: ' + (safety.err ? 'TRIPPED ' + errString(safety.err) : 'normal') + '  warnings=' + safety.warnings,
+      'limits: over_temp_trip=' + K.maxSafeTemp + ' C, min_flow_for_heater=' + K.minFlowHeater + ' L/min'
+    ].join('\n');
+  }
+
+  function addMsg(role, text, cmds) {
+    var m = { id: ++chatRev, role: role, text: text, commands: cmds || [],
+              executed: false, results: '', timeSec: Math.floor((now() - simStart) / 1000) };
+    chatMsgs.push(m);
+    if (chatMsgs.length > 40) chatMsgs = chatMsgs.slice(-40);
+    return m;
+  }
+
+  function runAction(action, value, arg) {
+    var a = String(action || '');
+    var name = String(arg || '').toLowerCase();
+    switch (a) {
+      case 'set_pump_pct': return applyControl({ pump_pct: value });
+      case 'set_flow_setpoint': return applyControl({ flow_setpoint: value });
+      case 'pump_stop': return applyControl({ pump_stop: true });
+      case 'set_cold_pump_pct': return applyControl({ cold_pump_pct: value });
+      case 'set_cold_flow_setpoint': return applyControl({ cold_flow_setpoint: value });
+      case 'cold_pump_stop': return applyControl({ cold_pump_stop: true });
+      case 'set_heater_mode': {
+        var modes = { off: 0, manual: 1, thermostatic: 2, thermo: 2, time_pwm: 3, pwm: 3, pid: 4 };
+        var m = modes[name];
+        if (m == null) m = value | 0;
+        return applyControl({ heater_mode: m });
+      }
+      case 'set_heater_manual': return applyControl({ heater_manual: name === 'on' || value >= 0.5 });
+      case 'set_target_temp': return applyControl({ target_temp: value });
+      case 'set_heater_duty': return applyControl({ heater_duty: value });
+      case 'estop': return applyControl({ estop: true });
+      case 'clear_log': log = []; return { ok: true, message: 'Log buffer cleared' };
+      default: return { ok: false, message: 'Unknown command: ' + a };
+    }
+  }
+
+  function executeMsg(m) {
+    if (!m || !m.commands || !m.commands.length || m.executed) {
+      return { ok: false, message: 'Nothing to execute (already run or no commands)' };
+    }
+    var results = [], allOk = true;
+    m.commands.forEach(function (c) {
+      var r = runAction(c.action, c.value, c.arg);
+      allOk = allOk && r.ok;
+      results.push((r.ok ? 'OK ' : 'FAILED ') + r.message);
+    });
+    m.executed = true;
+    m.results = results.join('; ');
+    addMsg('system', (allOk ? 'Executed: ' : 'Executed with errors: ') + m.results, []);
+    return { ok: allOk, message: m.results };
+  }
+
+  function handleChatResult(o) {
+    var reply = o && o.reply ? String(o.reply) : '(no reply)';
+    var cmds = [];
+    if (o && Array.isArray(o.commands)) {
+      o.commands.slice(0, 6).forEach(function (c) {
+        if (c && c.action) cmds.push({ action: String(c.action), value: Number(c.value) || 0, arg: String(c.arg || '') });
+      });
+    }
+    var m = addMsg('assistant', reply, cmds);
+    if (ai.chatAuto && cmds.length) executeMsg(m);
+  }
+
+  function applyClosedLoop(rec, seq) {
+    if (appliedSeq === seq) return;
+    appliedSeq = seq;
+    if (safety.err) return;
+    var warn = String(rec.safety_warning || '').toUpperCase();
+    if (warn && warn !== 'NONE') return;
+    var apply = [];
+    if (pump.mode === 0) {
+      var cur = Math.round(pump.target);
+      var tgt = clamp(rec.recommended_pump_pct, cur - 15, cur + 15);
+      if (heater.mode !== 0) tgt = Math.max(tgt, 20);
+      if (tgt !== cur) apply.push('hot pump ' + tgt + '%');
+    }
+    if (pumpCold.mode === 0) {
+      var cur2 = Math.round(pumpCold.target);
+      var tgt2 = clamp(rec.recommended_cold_pump_pct, cur2 - 15, cur2 + 15);
+      if (heater.mode !== 0) tgt2 = Math.max(tgt2, 20);
+      if (tgt2 !== cur2) apply.push('cold pump ' + tgt2 + '%');
+    }
+    if (heater.mode === 3) {
+      var c = Math.round(heater.dutySetting);
+      var t = clamp(rec.recommended_heater_duty, c - 20, c + 20);
+      if (t !== c) apply.push('heater duty ' + t + '%');
+    }
+    if (!apply.length) return;
+    if (pump.mode === 0) applyControl({ pump_pct: clamp(rec.recommended_pump_pct, Math.round(pump.target) - 15, Math.round(pump.target) + 15) });
+    if (pumpCold.mode === 0) applyControl({ cold_pump_pct: clamp(rec.recommended_cold_pump_pct, Math.round(pumpCold.target) - 15, Math.round(pumpCold.target) + 15) });
+    if (heater.mode === 3) applyControl({ heater_duty: clamp(rec.recommended_heater_duty, Math.round(heater.dutySetting) - 20, Math.round(heater.dutySetting) + 20) });
+    addMsg('system', 'AI closed-loop applied: ' + apply.join(', '), []);
+  }
+
+  function handleAnalysisResult(o) {
+    var hot = clamp(Math.round(Number(o.recommended_pump_pct) || 0), 0, 100);
+    var coldRaw = (o.recommended_cold_pump_pct != null) ? Number(o.recommended_cold_pump_pct) : hot;
+    ai.rec = {
+      analysis: String(o.analysis || ''),
+      efficiency_score: clamp(Number(o.efficiency_score) || 0, 0, 100),
+      recommended_pump_pct: hot,
+      recommended_cold_pump_pct: clamp(Math.round(coldRaw), 0, 100),
+      recommended_heater_duty: clamp(Math.round(Number(o.recommended_heater_duty) || 0), 0, 100),
+      safety_warning: String(o.safety_warning || 'NONE'),
+      suggested_action: String(o.action || 'MAINTAIN'),
+      time: now()
+    };
+    ai.seq++;
+    if (ai.closed) applyClosedLoop(ai.rec, ai.seq);
+  }
+
+  function geminiRequest(job, userText) {
+    if (!aiHasKey()) { ai.lastError = 'Gemini API key is not set (Assistant tab)'; return; }
+    if (ai.busy) return;
+    ai.busy = true; ai.phase = 'waiting for model'; ai.lastError = 'OK';
+    var t0 = now();
+    var user = job === 'chat'
+      ? 'LIVE TELEMETRY:\n' + aiContext() + '\n\nOPERATOR MESSAGE:\n' + userText
+      : 'LIVE TELEMETRY:\n' + aiContext() + '\n\nAssess the exchanger and recommend setpoints.';
+    var payload = {
+      systemInstruction: { parts: [{ text: job === 'chat' ? CHAT_PROMPT : ANALYSIS_PROMPT }] },
+      contents: [{ role: 'user', parts: [{ text: user }] }],
+      generationConfig: {
+        temperature: 0.3,
+        responseMimeType: 'application/json',
+        responseSchema: job === 'chat' ? CHAT_SCHEMA : ANALYSIS_SCHEMA
+      }
+    };
+    var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+              encodeURIComponent(ai.model) + ':generateContent';
+    realFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': ai.key },
+      body: JSON.stringify(payload)
+    }).then(function (res) {
+      ai.phase = 'reading';
+      return res.text().then(function (txt) { return { ok: res.ok, status: res.status, txt: txt }; });
+    }).then(function (r) {
+      ai.latency = Math.round(now() - t0);
+      ai.requests++;
+      if (!r.ok) {
+        var msg = 'HTTP ' + r.status;
+        try {
+          var e = JSON.parse(r.txt);
+          if (e && e.error && e.error.message) msg += ' - ' + e.error.message;
+        } catch (x) { /* not JSON */ }
+        throw new Error(msg);
+      }
+      var data = JSON.parse(r.txt);
+      var text = '';
+      var parts = (data.candidates && data.candidates[0] && data.candidates[0].content &&
+                   data.candidates[0].content.parts) || [];
+      for (var i = 0; i < parts.length; i++) if (!parts[i].thought) text += (parts[i].text || '');
+      var obj = JSON.parse(text);
+      ai.lastError = 'OK';
+      if (job === 'chat') handleChatResult(obj); else handleAnalysisResult(obj);
+    }).catch(function (e) {
+      ai.errors++;
+      ai.lastError = String((e && e.message) || e);
+    }).then(function () {
+      ai.busy = false; ai.phase = '';
+    });
+  }
+
+  function handleLocal(raw) {
+    var s = raw.toLowerCase().trim();
+    var m;
+    if (s === 'help' || s === '?') {
+      addMsg('system', 'Offline commands: status | pump <0-100> | pump off | flow <L/min> | coldpump <0-100> | coldpump off | coldflow <L/min> | heater off|manual|thermo|pwm|pid | heater on|off | setpoint <C> | duty <0-100> | estop | reset | sim on|off|auto | clear log. Anything else goes to Gemini.', []);
+      return true;
+    }
+    if (s === 'status') { addMsg('system', aiContext(), []); return true; }
+    if (s === 'estop' || s === 'stop all' || s === 'emergency stop') { addMsg('system', applyControl({ estop: true }).message, []); return true; }
+    if (s === 'reset') { var ok = resetFault(); addMsg('system', ok ? 'Safety trip cleared' : 'Cannot reset: condition still present', []); return true; }
+    if (s === 'clear log') { log = []; addMsg('system', 'Log buffer cleared', []); return true; }
+    if ((m = s.match(/^pump\s+(off|stop|(\d+(?:\.\d+)?))$/))) {
+      if (m[2] === undefined) applyControl({ pump_stop: true }); else applyControl({ pump_pct: +m[2] });
+      addMsg('system', 'Pump command applied', []); return true;
+    }
+    if ((m = s.match(/^flow\s+(\d+(?:\.\d+)?)$/))) { applyControl({ flow_setpoint: +m[1] }); addMsg('system', 'Flow setpoint applied', []); return true; }
+    if ((m = s.match(/^coldpump\s+(off|stop|(\d+(?:\.\d+)?))$/))) {
+      if (m[2] === undefined) applyControl({ cold_pump_stop: true }); else applyControl({ cold_pump_pct: +m[2] });
+      addMsg('system', 'Cold pump command applied', []); return true;
+    }
+    if ((m = s.match(/^coldflow\s+(\d+(?:\.\d+)?)$/))) { applyControl({ cold_flow_setpoint: +m[1] }); addMsg('system', 'Cold flow setpoint applied', []); return true; }
+    if ((m = s.match(/^heater\s+(on|off|manual|thermo|thermostatic|pwm|time_pwm|pid)$/))) {
+      var w = m[1];
+      if (w === 'on') { applyControl({ heater_mode: 1 }); applyControl({ heater_manual: true }); }
+      else if (w === 'off') applyControl({ heater_mode: 0 });
+      else { var modes = { manual: 1, thermo: 2, thermostatic: 2, pwm: 3, time_pwm: 3, pid: 4 }; applyControl({ heater_mode: modes[w] }); }
+      addMsg('system', 'Heater command applied', []); return true;
+    }
+    if ((m = s.match(/^(?:setpoint|target|sp)\s+(\d+(?:\.\d+)?)$/))) { applyControl({ target_temp: +m[1] }); addMsg('system', 'Setpoint applied', []); return true; }
+    if ((m = s.match(/^duty\s+(\d+(?:\.\d+)?)$/))) { applyControl({ heater_duty: +m[1] }); addMsg('system', 'Duty applied', []); return true; }
+    if ((m = s.match(/^sim\s+(on|off|auto)$/))) { simMode = m[1] === 'on' ? 1 : (m[1] === 'off' ? 0 : 2); addMsg('system', 'Simulation mode ' + m[1] + ' (hosted page always simulates)', []); return true; }
+    return false;
+  }
+
+  function handleChat(text) {
+    text = String(text || '').trim();
+    if (!text) return { ok: false, message: 'Empty message' };
+    addMsg('user', text, []);
+    if (handleLocal(text)) return { ok: true, message: 'Received' };
+    if (!aiHasKey()) {
+      addMsg('system', 'AI unavailable: Gemini API key is not set. Offline commands still work - type help.', []);
+      return { ok: true, message: 'Received' };
+    }
+    geminiRequest('chat', text);
+    return { ok: true, message: 'Received' };
+  }
+
+  function applyAiConfig(b) {
+    if (typeof b.api_key === 'string') { ai.key = b.api_key.trim(); ai.lastAuto = now(); }
+    if (typeof b.model === 'string') {
+      if (!/^gemini-[\w.\-]+$/.test(b.model)) return { ok: false, message: 'Invalid model id (expected e.g. gemini-2.5-flash)' };
+      ai.model = b.model;
+    }
+    if (typeof b.auto_interval_ms === 'number') {
+      ai.auto = b.auto_interval_ms > 0;
+      if (ai.auto) ai.interval = b.auto_interval_ms;
+      ai.lastAuto = now();
+    }
+    if (typeof b.closed_loop === 'boolean') ai.closed = b.closed_loop;
+    if (typeof b.chat_auto_exec === 'boolean') ai.chatAuto = b.chat_auto_exec;
+    saveAi();
+    return { ok: true, message: 'AI config updated' };
+  }
+
+  function chatGet() {
+    return { rev: chatRev, busy: ai.busy, phase: ai.phase, auto_exec: ai.chatAuto, messages: chatMsgs };
+  }
+
+  function aiTelemetry() {
+    var o = {
+      model: ai.model, has_key: aiHasKey(),
+      key_hint: aiHasKey() ? '...' + ai.key.slice(-4) : '',
+      auto_enabled: ai.auto, interval_ms: ai.interval, closed_loop: ai.closed,
+      chat_auto_exec: ai.chatAuto, busy: ai.busy, phase: ai.phase,
+      last_error: ai.lastError, latency_ms: ai.latency, requests: ai.requests,
+      errors: ai.errors, chat_rev: chatRev,
+      unavailable: aiHasKey() ? '' : 'Gemini API key is not set (Assistant tab)',
+      has_rec: !!ai.rec
+    };
+    if (ai.rec) {
+      o.analysis = ai.rec.analysis;
+      o.efficiency_score = ai.rec.efficiency_score;
+      o.recommended_pump_pct = ai.rec.recommended_pump_pct;
+      o.recommended_cold_pump_pct = ai.rec.recommended_cold_pump_pct;
+      o.recommended_heater_duty = ai.rec.recommended_heater_duty;
+      o.safety_warning = ai.rec.safety_warning;
+      o.suggested_action = ai.rec.suggested_action;
+      o.age_s = Math.max(0, Math.round((now() - ai.rec.time) / 1000));
+    }
+    return o;
+  }
+
+  // =====================================================================
   // Plant (mirror PlantSimulator::update, two loops)
   // =====================================================================
   function pumpCurve(pct) { return pct < 10 ? 0 : K.maxFlow * (pct - 10) / 90; }
@@ -369,6 +736,12 @@
     updateHeater();
 
     if (t - lastLog >= 1000) { lastLog = t; record(); }
+
+    // Periodic Gemini analysis (only when a key is present and enabled).
+    if (ai.auto && aiHasKey() && !ai.busy && t - ai.lastAuto >= ai.interval) {
+      ai.lastAuto = t;
+      geminiRequest('analysis');
+    }
   }
   setInterval(tick, 100);
 
@@ -407,10 +780,7 @@
              pump_min_duty: pump.minDuty, flow_kp: pump.pid.kp, flow_ki: pump.pid.ki,
              cold_pump_min_duty: pumpCold.minDuty, cold_flow_kp: pumpCold.pid.kp,
              cold_flow_ki: pumpCold.pid.ki, max_temp: K.maxSafeTemp },
-      ai: { model: 'not available (hosted simulator)', has_key: false, key_hint: '',
-            auto_enabled: false, interval_ms: 60000, closed_loop: false, chat_auto_exec: false,
-            busy: false, phase: '', last_error: 'OK', latency_ms: 0, requests: 0, errors: 0,
-            chat_rev: chatRev, unavailable: 'AI is disabled in the hosted simulator', has_rec: false }
+      ai: aiTelemetry()
     };
   }
 
@@ -466,17 +836,6 @@
   }
 
   // =====================================================================
-  // Chat (no AI over the network)
-  // =====================================================================
-  function chatGet() { return { rev: chatRev, busy: false, phase: '', auto_exec: false, messages: chatMsgs }; }
-  function chatPost(text) {
-    chatMsgs.push({ id: ++chatRev, role: 'user', text: text, commands: [], executed: false, results: '', timeSec: 0 });
-    chatMsgs.push({ id: ++chatRev, role: 'system', text: 'Hosted simulator: no AI or hardware link. Drive the virtual rig from the Control tab and inject faults under Settings.', commands: [], executed: false, results: '', timeSec: 0 });
-    if (chatMsgs.length > 40) chatMsgs = chatMsgs.slice(-40);
-    return { ok: true, message: 'Received' };
-  }
-
-  // =====================================================================
   // CSV export (client-side Blob)
   // =====================================================================
   function downloadCsv() {
@@ -520,12 +879,23 @@
     if (u.indexOf('/api/telemetry') >= 0) return R(telemetry());
     if (u.indexOf('/api/control') >= 0) return R(applyControl(parseBody(opts)));
     if (u.indexOf('/api/config') >= 0) return R(applyConfig(parseBody(opts)));
-    if (u.indexOf('/api/ai/config') >= 0) return R({ ok: true, message: 'AI is disabled in the hosted simulator' });
-    if (u.indexOf('/api/ai/query') >= 0) return R({ ok: false, message: 'AI is disabled in the hosted simulator' }, 409);
-    if (u.indexOf('/api/chat/execute') >= 0) return R({ ok: false, message: 'AI is disabled in the hosted simulator' }, 409);
+    if (u.indexOf('/api/ai/config') >= 0) return R(applyAiConfig(parseBody(opts)));
+    if (u.indexOf('/api/ai/query') >= 0) {
+      if (!aiHasKey()) return R({ ok: false, message: 'Gemini API key is not set (Assistant tab)' }, 409);
+      if (ai.busy) return R({ ok: false, message: 'Gemini is busy' }, 409);
+      geminiRequest('analysis');
+      return R({ ok: true, message: 'Analysis queued' }, 202);
+    }
+    if (u.indexOf('/api/chat/execute') >= 0) {
+      var cid = parseBody(opts).id;
+      var target = null;
+      for (var ci = 0; ci < chatMsgs.length; ci++) if (chatMsgs[ci].id === cid) { target = chatMsgs[ci]; break; }
+      var er = executeMsg(target);
+      return R(er, er.ok ? 200 : 409);
+    }
     if (u.indexOf('/api/chat/clear') >= 0) { chatMsgs = []; chatRev++; return R({ ok: true, message: 'Chat cleared' }); }
     if (u.indexOf('/api/chat') >= 0) {
-      if (method === 'POST') return R(chatPost(parseBody(opts).message || ''));
+      if (method === 'POST') return R(handleChat(parseBody(opts).message || ''));
       return R(chatGet());
     }
     if (u.indexOf('/api/wifi/scan') >= 0) return R({ scanning: false, networks: [] });

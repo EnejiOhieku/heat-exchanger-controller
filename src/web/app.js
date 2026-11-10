@@ -220,7 +220,7 @@ $('btnLogClear').addEventListener('click', async () => {
 $('btnKey').addEventListener('click', async () => {
   const key = $('txtKey').value.trim();
   if (key.length < 20) return toast('That does not look like a Gemini API key', 'err');
-  if (await api('/api/ai/config', { api_key: key })) { $('txtKey').value = ''; toast('API key saved to flash', 'ok'); poll(); }
+  if (await api('/api/ai/config', { api_key: key })) { $('txtKey').value = ''; toast('API key saved', 'ok'); poll(); }
 });
 $('selModel').addEventListener('change', async (e) => {
   touch('model');

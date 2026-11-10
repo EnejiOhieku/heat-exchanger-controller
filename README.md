@@ -211,7 +211,9 @@ The build uses the **Minimal SPIFFS (1.9 MB app, OTA)** partition scheme (`esp32
 
 The dashboard can also run entirely in a browser with no ESP32 attached. `src/web/simulator.js` is a JavaScript port of the virtual rig (plant, thermodynamics, PID, latching safety, both pumps and flow meters) that answers the dashboard's `/api/*` calls locally, so the same UI — KPIs, trend chart, controls, Status tab and CSV export — runs on any static host.
 
-It boots into a running example (heater PID to 50 °C, hot pump 60 %, cold pump 50 %) so it produces data immediately. AI/chat are disabled; everything else works. Change setpoints, inject faults and download the CSV exactly as on the real rig.
+It boots into a running example (heater PID to 50 °C, hot pump 60 %, cold pump 50 %) so it produces data immediately. Change setpoints, inject faults and download the CSV exactly as on the real rig.
+
+**Gemini in the browser:** the Assistant tab works on the hosted page too. It calls the Generative Language API directly from your browser with the key you paste, and stores that key in this browser's `localStorage` — it is never committed to the repo. In Google Cloud Console, restrict the key to the *Generative Language API* and (ideally) to the `https://enejiohieku.github.io` HTTP referrer. If the default model id is not available to your key, choose **Custom model id** and enter one you can access. Chat, "Analyse now" and the optional closed loop all run client-side; the AI still cannot reset a trip.
 
 **Build the site**
 

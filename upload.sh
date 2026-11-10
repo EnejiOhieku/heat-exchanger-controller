@@ -4,7 +4,7 @@ set -e
 PORT="${1:-/dev/ttyUSB0}"
 SKETCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$SKETCH_DIR/build"
-FQBN="esp32:esp32:esp32da"
+FQBN="esp32:esp32:esp32da:PartitionScheme=min_spiffs"   # 1.9 MB app + OTA
 
 # Detect arduino-cli binary
 if command -v arduino-cli &>/dev/null; then

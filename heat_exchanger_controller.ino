@@ -2,14 +2,14 @@
 #include "src/HeatExchanger.h"
 
 // Task scheduling timestamps
-static uint32_t lastFastTick = 0;   // 100ms (10 Hz)
-static uint32_t lastSlowTick = 0;   // 1000ms (1 Hz)
-static uint32_t lastLcdTick = 0;    // 250ms (4 Hz)
+static uint32_t lastFastTick = 0;   // 100 ms (10 Hz): flow, simulator, safety, heater
+static uint32_t lastLcdTick = 0;    // 250 ms (4 Hz)
+static uint32_t lastSlowTick = 0;   // 1000 ms (1 Hz): thermodynamics, logging
 static bool ledState = false;
 
 void setup() {
     Serial.begin(115200);
-    delay(500);
+    delay(300);
     Serial.println("\n==================================================");
     Serial.println("  ESP32 HEAT EXCHANGER CONTROL SYSTEM STARTING   ");
     Serial.println("==================================================");
@@ -17,12 +17,19 @@ void setup() {
     pinMode(PIN_STATUS_LED, OUTPUT);
     digitalWrite(PIN_STATUS_LED, HIGH);
 
-    // 1. Initialize Subsystems
-    Safety.init();
-    Flow.init();
-    Pump.init();
+    // Actuators first so their pins are driven to a safe state immediately.
     Heater.init();
+    Pump.init();
+    ColdPump.init();
+    Safety.init();
+    FlowHot.init();
+    FlowCold.init();
     Sensors.init();
+    Settings.load();
+
+    // Real hardware or virtual plant (AUTO: simulate when probes are missing/faulty).
+    Commands::applySimMode(Sim.getMode());
+
     Display.init();
     Logger.init();
     NetManager.init();
@@ -30,93 +37,81 @@ void setup() {
     Web.init();
 
     digitalWrite(PIN_STATUS_LED, LOW);
-    Serial.println("[System] Initialization complete. Entering control loop.");
+    Serial.printf("[System] Ready (%s). Free heap: %u bytes\n",
+                  Sim.isActive() ? "SIMULATION" : "hardware", ESP.getFreeHeap());
 }
 
 void loop() {
     uint32_t now = millis();
 
-    // 1. Handle incoming HTTP requests
     Web.handleClient();
-
-    // 2. High-frequency pump motor ramping
-    Pump.update();
-
-    // 3. Network background state
+    Sensors.update();       // DS18B20 conversion state machine (non-blocking)
+    Pump.update();          // Soft ramp + PWM output stage (hot loop)
+    ColdPump.update();      // Soft ramp + PWM output stage (cold loop)
     NetManager.update();
 
-    // 4. Fast Loop (10 Hz / 100 ms): Flow calculations & Safety interlocks
+    // ---- Fast loop: interlocks and actuator control ---------------------
     if (now - lastFastTick >= 100) {
         lastFastTick = now;
 
-        Flow.update();
+        FlowHot.update();
+        FlowCold.update();
+        Sim.update(Pump.getSpeedPercent(), ColdPump.getSpeedPercent(), Heater.isRelayEnergized());
 
-        float thIn = Sensors.getHotIn();
-        float thOut = Sensors.getHotOut();
-        float tcIn = Sensors.getColdIn();
-        float tcOut = Sensors.getColdOut();
-        float flowLPM = Flow.getFlowRateLPM();
+        float flowLPM = PV::flowLPM();
+        float flowColdLPM = PV::flowColdLPM();
+        Pump.updateFlowLoop(flowLPM);
+        ColdPump.updateFlowLoop(flowColdLPM);
 
-        bool heaterWanted = (Heater.getMode() != HEATER_MODE_OFF);
-        Safety.update(flowLPM, thIn, thOut, tcIn, tcOut, heaterWanted);
+        SafetyInputs in;
+        in.flowLPM = flowLPM;
+        in.coldFlowLPM = flowColdLPM;
+        in.probeFaultMask = PV::faultMask();
+        in.maxValidTempC = PV::maxValidTemp();
+        in.heaterDemand = Heater.isDemanding();
+        in.relayEnergized = Heater.isRelayEnergized();
+        in.pumpRunning = Pump.isRunning();
+        Safety.update(in);
 
-        // Control temperature for thermostatic mode: Hot side outlet (Th,out) or Hot inlet
-        float controlTemp = (thOut > -50.0f) ? thOut : thIn;
-        Heater.update(controlTemp);
+        Heater.update(PV::temp((ProbeIndex)Heater.getControlProbe()), Safety.isHeaterAllowed());
+
+        // 5 Hz alarm flash while tripped
+        if (Safety.isTripped()) {
+            ledState = !ledState;
+            digitalWrite(PIN_STATUS_LED, ledState);
+        }
     }
 
-    // 5. Display Refresh Loop (4 Hz / 250 ms)
+    // ---- Display -------------------------------------------------------
     if (now - lastLcdTick >= 250) {
         lastLcdTick = now;
-        String ipStr = NetManager.getActiveIP();
-        Display.update(Thermo.getData(), Heater.isRelayEnergized(), Pump.getSpeedPercent(), ipStr.c_str());
+        String ip = NetManager.getActiveIP();
+        if (Sim.isActive()) ip = "SIM " + ip;
+        LcdStatus st{ Heater.isRelayEnergized(), Pump.getSpeedPercent(), ColdPump.getSpeedPercent(),
+                      Heater.getModeShort(), Heater.getTargetTemp(), ip.c_str() };
+        Display.update(Thermo.getData(), st);
     }
 
-    // 6. Slow Loop (1 Hz / 1000 ms): Thermodynamic calculations, logging & AI
+    // ---- Slow loop: thermodynamics and logging --------------------------
     if (now - lastSlowTick >= 1000) {
         lastSlowTick = now;
 
-        // Retrieve latest Dallas conversions
-        Sensors.updateReadings();
+        // AUTO enters the virtual plant on any hardware fault and returns to
+        // real hardware automatically once the fault clears.
+        Commands::updateSimSupervisor();
 
-        float thIn = Sensors.getHotIn();
-        float thOut = Sensors.getHotOut();
-        float tcIn = Sensors.getColdIn();
-        float tcOut = Sensors.getColdOut();
-        float flowLPM = Flow.getFlowRateLPM();
+        Thermo.compute(PV::temp(PROBE_HOT_IN), PV::temp(PROBE_HOT_OUT),
+                       PV::temp(PROBE_COLD_IN), PV::temp(PROBE_COLD_OUT),
+                       PV::flowLPM(), PV::flowColdLPM());
+        Logger.record(Thermo.getData(), Pump.getSpeedPercent(), ColdPump.getSpeedPercent(),
+                      Heater.isRelayEnergized(), (uint8_t)Heater.getDutyPercent(), Sim.isActive());
 
-        // Compute thermodynamic state (Q, LMTD, effectiveness)
-        Thermo.compute(thIn, thOut, tcIn, tcOut, flowLPM);
-
-        // Record telemetry into circular log buffer
-        Logger.record(Thermo.getData(), Pump.getSpeedPercent(), Heater.isRelayEnergized());
-
-        // Heartbeat LED (1 Hz if normal, 5 Hz fast flash if safety tripped)
-        if (Safety.isTripped()) {
-            ledState = !ledState;
-            digitalWrite(PIN_STATUS_LED, ledState ? HIGH : LOW);
-        } else {
-            ledState = !ledState;
-            digitalWrite(PIN_STATUS_LED, ledState ? HIGH : LOW);
-        }
-
-        // Trigger next asynchronous temperature conversion
-        Sensors.requestReadings();
-
-        // Gemini AI Periodic Auto-Analysis
-        Gemini.update(Thermo.getData(), Pump.getSpeedPercent(), Heater.isRelayEnergized(), Heater.getTargetTemp());
-
-        // Autonomous Closed-Loop AI Control (if enabled by user in Web UI)
-        if (Gemini.isAutonomousControlEnabled()) {
-            const GeminiRecommendation& rec = Gemini.getLastRecommendation();
-            if (rec.hasValidRecommendation && (now / 1000 - rec.lastAnalysisTimeSec < 60)) {
-                // Apply AI recommendations safely
-                Pump.setSpeedPercent(rec.recommendedPumpPwm);
-                if (rec.recommendedHeaterDuty > 0) {
-                    Heater.setMode(HEATER_MODE_TIME_PWM);
-                    Heater.setDutyPercent(rec.recommendedHeaterDuty);
-                }
-            }
+        if (!Safety.isTripped()) {
+            ledState = !ledState;   // 1 Hz heartbeat
+            digitalWrite(PIN_STATUS_LED, ledState);
         }
     }
+
+    // ---- Gemini: periodic analysis, chat replies, AI closed loop -------
+    Chat.update();
 }

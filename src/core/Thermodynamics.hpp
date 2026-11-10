@@ -11,15 +11,18 @@ struct ThermodynamicData {
     float tcOut;          // °C
     float deltaTh;        // °C (Th,in - Th,out)
     float deltaTc;        // °C (Tc,out - Tc,in)
-    float flowRateLPM;    // L/min
-    float massFlowKgS;    // kg/s
-    float qHotWatts;      // Watts
+    float flowRateLPM;        // L/min (hot loop)
+    float flowRateColdLPM;    // L/min (cold loop)
+    float massFlowKgS;        // kg/s (hot loop)
+    float qHotWatts;      // W
     float qHotKW;         // kW
-    float qColdWatts;     // Watts
+    float qColdWatts;     // W
     float qColdKW;        // kW
     float lmtd;           // °C
+    float uaWPerK;        // W/K  (Q_hot / LMTD) - falls as the exchanger fouls
     float effectiveness;  // % (0 - 100)
     float heatBalance;    // % (Qcold / Qhot * 100)
+    bool valid;           // all four probes valid
 };
 
 class Thermodynamics {
@@ -28,69 +31,64 @@ public:
         memset(&_data, 0, sizeof(_data));
     }
 
+    // coldFlowLPM < 0 means "same flow as hot side" (single flow meter rigs).
     void compute(float thIn, float thOut, float tcIn, float tcOut, float flowLPM, float coldFlowLPM = -1.0f) {
         _data.thIn = thIn;
         _data.thOut = thOut;
         _data.tcIn = tcIn;
         _data.tcOut = tcOut;
         _data.flowRateLPM = flowLPM;
+        _data.flowRateColdLPM = (coldFlowLPM >= 0.0f) ? coldFlowLPM : flowLPM;
+        _data.massFlowKgS = (flowLPM / 60.0f) * WATER_DENSITY;
 
-        // 1. Temperature differences
+        auto ok = [](float t) { return t > SENSOR_DISCONNECT_VAL + 1.0f; };
+        _data.valid = ok(thIn) && ok(thOut) && ok(tcIn) && ok(tcOut);
+        if (!_data.valid) {
+            _data.deltaTh = _data.deltaTc = 0.0f;
+            _data.qHotWatts = _data.qHotKW = _data.qColdWatts = _data.qColdKW = 0.0f;
+            _data.lmtd = _data.uaWPerK = _data.effectiveness = _data.heatBalance = 0.0f;
+            return;
+        }
+
         _data.deltaTh = thIn - thOut;
         _data.deltaTc = tcOut - tcIn;
 
-        // 2. Mass flow rate on hot side: kg/s = (L/min / 60) * rho
-        _data.massFlowKgS = (flowLPM / 60.0f) * WATER_DENSITY;
-
-        // 3. Heat Transfer Rate Hot Side (Q_hot = m_dot * Cp * deltaTh)
-        if (_data.massFlowKgS > 0.0001f && _data.deltaTh > 0.0f) {
-            _data.qHotWatts = _data.massFlowKgS * WATER_SPECIFIC_HEAT * _data.deltaTh;
-        } else {
-            _data.qHotWatts = 0.0f;
-        }
+        // Q_hot = m_dot * Cp * dTh
+        _data.qHotWatts = (_data.massFlowKgS > 0.0001f && _data.deltaTh > 0.0f)
+                              ? _data.massFlowKgS * WATER_SPECIFIC_HEAT * _data.deltaTh : 0.0f;
         _data.qHotKW = _data.qHotWatts / 1000.0f;
 
-        // 4. Heat Absorption Cold Side (Q_cold = m_dot_c * Cp * deltaTc)
-        float actualColdFlow = (coldFlowLPM >= 0.0f) ? coldFlowLPM : flowLPM;
-        float coldMassFlow = (actualColdFlow / 60.0f) * WATER_DENSITY;
-
-        if (coldMassFlow > 0.0001f && _data.deltaTc > 0.0f) {
-            _data.qColdWatts = coldMassFlow * WATER_SPECIFIC_HEAT * _data.deltaTc;
-        } else {
-            _data.qColdWatts = 0.0f;
-        }
+        // Q_cold = m_dot_c * Cp * dTc
+        float coldMassFlow = (((coldFlowLPM >= 0.0f) ? coldFlowLPM : flowLPM) / 60.0f) * WATER_DENSITY;
+        _data.qColdWatts = (coldMassFlow > 0.0001f && _data.deltaTc > 0.0f)
+                               ? coldMassFlow * WATER_SPECIFIC_HEAT * _data.deltaTc : 0.0f;
         _data.qColdKW = _data.qColdWatts / 1000.0f;
 
-        // 5. Heat Balance ratio
         if (_data.qHotWatts > 10.0f) {
-            _data.heatBalance = (_data.qColdWatts / _data.qHotWatts) * 100.0f;
-            if (_data.heatBalance > 150.0f) _data.heatBalance = 150.0f;
+            _data.heatBalance = fminf((_data.qColdWatts / _data.qHotWatts) * 100.0f, 150.0f);
         } else {
             _data.heatBalance = 0.0f;
         }
 
-        // 6. Logarithmic Mean Temperature Difference (LMTD) for Counter-flow
+        // Counter-flow LMTD, arithmetic mean when dT1 ~ dT2
         float dt1 = thIn - tcOut;
         float dt2 = thOut - tcIn;
-
         if (dt1 > 0.05f && dt2 > 0.05f) {
             float diff = dt1 - dt2;
-            if (fabsf(diff) < 0.1f) {
-                _data.lmtd = (dt1 + dt2) / 2.0f;
-            } else {
-                _data.lmtd = diff / logf(dt1 / dt2);
-            }
+            _data.lmtd = (fabsf(diff) < 0.1f) ? (dt1 + dt2) / 2.0f : diff / logf(dt1 / dt2);
         } else {
             _data.lmtd = 0.0f;
         }
+        _data.uaWPerK = (_data.lmtd > 0.2f) ? _data.qHotWatts / _data.lmtd : 0.0f;
 
-        // 7. Heat Exchanger Effectiveness (ε)
+        // Effectiveness = Q / (C_min * (Th,in - Tc,in)). The two loops have
+        // independent flows, so C_min is the smaller of the two capacity rates.
+        float cHot = _data.massFlowKgS * WATER_SPECIFIC_HEAT;
+        float cCold = coldMassFlow * WATER_SPECIFIC_HEAT;
+        float cMin = fminf(cHot, cCold);
         float maxDeltaT = thIn - tcIn;
-        if (maxDeltaT > 0.5f && _data.deltaTh >= 0.0f) {
-            float eff = (_data.deltaTh / maxDeltaT) * 100.0f;
-            if (eff < 0.0f) eff = 0.0f;
-            if (eff > 100.0f) eff = 100.0f;
-            _data.effectiveness = eff;
+        if (cMin > 0.0001f && maxDeltaT > 0.5f) {
+            _data.effectiveness = constrain(_data.qHotWatts / (cMin * maxDeltaT) * 100.0f, 0.0f, 100.0f);
         } else {
             _data.effectiveness = 0.0f;
         }

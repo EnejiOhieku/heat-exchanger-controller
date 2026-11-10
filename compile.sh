@@ -32,7 +32,7 @@ on_error() {
 START_TIME=$(date +%s)
 SKETCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="$SKETCH_DIR/build"
-FQBN="esp32:esp32:esp32da"
+FQBN="esp32:esp32:esp32da:PartitionScheme=min_spiffs"   # 1.9 MB app + OTA
 
 mkdir -p "$BUILD_DIR"
 
@@ -41,7 +41,7 @@ echo -e "${CLR_MAGENTA}${CLR_BOLD}   ESP32 Heat Exchanger Controller - Build Sys
 echo -e "${CLR_MAGENTA}${CLR_BOLD}======================================================${CLR_RESET}"
 echo -e "Started: $(date '+%Y-%m-%d %H:%M:%S')"
 echo -e "Sketch:  ${CLR_BOLD}$SKETCH_DIR${CLR_RESET}"
-echo -e "Target:  ${CLR_BOLD}$FQBN (ESP32 DevKitC)${CLR_RESET}"
+echo -e "Target:  ${CLR_BOLD}$FQBN${CLR_RESET}"
 echo -e "Output:  ${CLR_BOLD}$BUILD_DIR${CLR_RESET}"
 
 # Step 1: Toolchain & Environment Verification

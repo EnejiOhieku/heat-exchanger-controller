@@ -3,237 +3,387 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Heat Exchanger Control & Telemetry</title>
+  <meta name="color-scheme" content="dark light">
+  <title>Heat Exchanger Control</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="header">
-    <h1>
-      <span>♨️ Heat Exchanger Controller</span>
-    </h1>
-    <div class="badges">
-      <span id="badgeSafety" class="badge badge-ok">NORMAL</span>
-      <span id="badgeWifi" class="badge">AP: 192.168.4.1</span>
-      <span id="badgeAi" class="badge">AI IDLE</span>
-      <button class="btn-estop" onclick="triggerEStop()">E-STOP</button>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/><circle cx="8" cy="7" r="2" fill="var(--hot)"/><circle cx="16" cy="17" r="2" fill="var(--cold)"/></svg>
+      <span>Heat Exchanger</span>
     </div>
-  </div>
+    <div class="chips">
+      <span id="chipSource" class="chip">HW</span>
+      <span id="chipSafety" class="chip chip-ok">NORMAL</span>
+      <span id="chipNet" class="chip">AP</span>
+      <span id="chipAi" class="chip">AI</span>
+    </div>
+    <button class="btn-estop" id="btnEstop" title="Emergency stop: heater off, both pumps stopped">E-STOP</button>
+  </header>
 
-  <div class="tab-nav">
-    <button class="tab-btn active" onclick="switchTab('dashboard')">Dashboard</button>
-    <button class="tab-btn" onclick="switchTab('gemini')">Gemini AI Advisor</button>
-    <button class="tab-btn" onclick="switchTab('logging')">CSV Data Logger</button>
-    <button class="tab-btn" onclick="switchTab('settings')">Settings & WiFi</button>
-  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="overview">Overview</button>
+    <button class="tab" data-tab="control">Control</button>
+    <button class="tab" data-tab="status">Status <span id="statusDot" class="dot hidden"></span></button>
+    <button class="tab" data-tab="assistant">Assistant <span id="chatDot" class="dot hidden"></span></button>
+    <button class="tab" data-tab="data">Data</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </nav>
 
-  <!-- TAB: DASHBOARD -->
-  <div id="tab-dashboard" class="tab-content active">
-    <div class="grid">
-      <!-- Temperatures Card -->
-      <div class="card">
-        <h2><span>🌡️ Temperature Probes</span> <span id="lblDeltaTh" class="val-hot">ΔTh: --°C</span></h2>
-        <div class="stat-row">
-          <span class="stat-label">Hot Inlet (Th,in):</span>
-          <span id="valThIn" class="stat-val val-hot">-- °C</span>
+  <main>
+    <!-- ================= OVERVIEW ================= -->
+    <section id="tab-overview" class="tab-panel active">
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-h"><h2>Process</h2><span id="lblUptime" class="muted">--</span></div>
+          <svg id="schematic" viewBox="0 0 520 230" class="schematic" role="img" aria-label="Process schematic">
+            <!-- tank -->
+            <rect x="14" y="70" width="90" height="110" rx="8" class="sx-tank"/>
+            <rect id="sxTankFill" x="18" y="100" width="82" height="76" rx="5" class="sx-water"/>
+            <path id="sxCoil" d="M30 160 q8 -12 16 0 t16 0 t16 0 t16 0" class="sx-coil"/>
+            <text x="59" y="62" class="sx-label" text-anchor="middle">Heater tank</text>
+            <text id="sxHeater" x="59" y="198" class="sx-small" text-anchor="middle">heater OFF</text>
+            <!-- hot pump -->
+            <circle id="sxPump" cx="160" cy="50" r="18" class="sx-pump"/>
+            <path id="sxImpeller" d="M160 38 L160 62 M148 50 L172 50" class="sx-imp"/>
+            <text id="sxPumpTxt" x="160" y="22" class="sx-small" text-anchor="middle">hot pump 0%</text>
+            <!-- hot path: tank -> pump -> HX in ; HX out -> tank -->
+            <path d="M104 90 H130 V50 H142" class="sx-pipe hot"/>
+            <path d="M178 50 H300 V82" class="sx-pipe hot flowline" id="sxHotIn"/>
+            <path d="M300 168 V200 H104 V160" class="sx-pipe hot-ret flowline" id="sxHotOut"/>
+            <!-- exchanger -->
+            <rect x="260" y="82" width="80" height="86" rx="6" class="sx-hx"/>
+            <path d="M270 96 H330 M270 110 H330 M270 124 H330 M270 138 H330 M270 152 H330" class="sx-plates"/>
+            <text x="352" y="136" class="sx-label">HX</text>
+            <!-- cold path with its own pump on the inlet -->
+            <path d="M510 168 H469" class="sx-pipe cold flowline" id="sxColdInA"/>
+            <path d="M441 168 H340" class="sx-pipe cold flowline" id="sxColdInB"/>
+            <path d="M340 96 H510" class="sx-pipe cold-ret flowline" id="sxColdOut"/>
+            <circle id="sxColdPump" cx="455" cy="168" r="14" class="sx-pump"/>
+            <path id="sxColdImpeller" d="M455 158 L455 178 M445 168 L465 168" class="sx-imp sx-imp-cold"/>
+            <text id="sxColdPumpTxt" x="455" y="147" class="sx-small" text-anchor="middle">cold pump 0%</text>
+            <!-- temperature tags -->
+            <g class="sx-tag"><rect x="190" y="58" width="78" height="22" rx="4"/><text id="sxThIn" x="229" y="73" text-anchor="middle">Th,in --</text></g>
+            <g class="sx-tag"><rect x="190" y="176" width="78" height="22" rx="4"/><text id="sxThOut" x="229" y="191" text-anchor="middle">Th,out --</text></g>
+            <g class="sx-tag"><rect x="352" y="174" width="84" height="22" rx="4"/><text id="sxTcIn" x="394" y="189" text-anchor="middle">Tc,in --</text></g>
+            <g class="sx-tag"><rect x="400" y="70" width="80" height="22" rx="4"/><text id="sxTcOut" x="440" y="85" text-anchor="middle">Tc,out --</text></g>
+            <text id="sxFlowHot" x="150" y="120" class="sx-flow">-- L/min</text>
+            <text id="sxFlowCold" x="455" y="205" class="sx-flow" text-anchor="middle">-- L/min</text>
+          </svg>
         </div>
-        <div class="stat-row">
-          <span class="stat-label">Hot Outlet (Th,out):</span>
-          <span id="valThOut" class="stat-val val-hot">-- °C</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Cold Inlet (Tc,in):</span>
-          <span id="valTcIn" class="stat-val val-cold">-- °C</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Cold Outlet (Tc,out):</span>
-          <span id="valTcOut" class="stat-val val-cold">-- °C</span>
-        </div>
-        <div class="stat-row" style="margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 8px;">
-          <span class="stat-label">Cold Heat Uptake (ΔTc):</span>
-          <span id="lblDeltaTc" class="stat-val val-cold">-- °C</span>
+
+        <div class="card">
+          <div class="card-h"><h2>Performance</h2><span id="lblThermoValid" class="muted"></span></div>
+          <div class="kpis">
+            <div class="kpi"><span class="kpi-l">Heat duty Q<sub>hot</sub></span><span class="kpi-v" id="kQh">--</span><span class="kpi-u">W</span></div>
+            <div class="kpi"><span class="kpi-l">Absorbed Q<sub>cold</sub></span><span class="kpi-v" id="kQc">--</span><span class="kpi-u">W</span></div>
+            <div class="kpi"><span class="kpi-l">Effectiveness ε</span><span class="kpi-v" id="kEff">--</span><span class="kpi-u">%</span></div>
+            <div class="kpi"><span class="kpi-l">LMTD</span><span class="kpi-v" id="kLmtd">--</span><span class="kpi-u">°C</span></div>
+            <div class="kpi"><span class="kpi-l">UA</span><span class="kpi-v" id="kUa">--</span><span class="kpi-u">W/K</span></div>
+            <div class="kpi"><span class="kpi-l">Heat balance</span><span class="kpi-v" id="kBal">--</span><span class="kpi-u">%</span></div>
+            <div class="kpi"><span class="kpi-l">Flow (hot)</span><span class="kpi-v" id="kFlow">--</span><span class="kpi-u">L/min</span></div>
+            <div class="kpi"><span class="kpi-l">Flow (cold)</span><span class="kpi-v" id="kFlowCold">--</span><span class="kpi-u">L/min</span></div>
+            <div class="kpi"><span class="kpi-l">Volume (hot)</span><span class="kpi-v" id="kVol">--</span><span class="kpi-u">L</span></div>
+            <div class="kpi"><span class="kpi-l">Volume (cold)</span><span class="kpi-v" id="kVolCold">--</span><span class="kpi-u">L</span></div>
+          </div>
+          <div class="probe-row" id="probeRow"></div>
         </div>
       </div>
 
-      <!-- Thermodynamics & Flow Card -->
       <div class="card">
-        <h2><span>⚡ Thermodynamics & Flow</span> <span id="valEff" class="val-accent">ε: --%</span></h2>
-        <div class="stat-row">
-          <span class="stat-label">Flow Rate:</span>
-          <span id="valFlow" class="stat-val val-flow">-- LPM</span>
+        <div class="card-h">
+          <h2>Trend</h2>
+          <div class="seg" id="segWindow">
+            <button data-win="60" class="active">1 min</button>
+            <button data-win="300">5 min</button>
+            <button data-win="600">10 min</button>
+          </div>
         </div>
-        <div class="stat-row">
-          <span class="stat-label">Total Volume Pumped:</span>
-          <span id="valVolume" class="stat-val">-- L</span>
+        <div class="chart-wrap"><canvas id="chart" aria-label="Temperature and flow trend"></canvas><div id="chartTip" class="chart-tip hidden"></div></div>
+        <div class="legend" id="legend"></div>
+      </div>
+    </section>
+
+    <!-- ================= CONTROL ================= -->
+    <section id="tab-control" class="tab-panel">
+      <div class="grid grid-2">
+        <!-- Hot-side pump -->
+        <div class="card">
+          <div class="card-h"><h2>Pump · hot loop</h2><span id="lblPumpState" class="pill">STOPPED</span></div>
+          <div class="seg seg-wide" id="segPumpMode">
+            <button data-pmode="0" class="active">Manual speed</button>
+            <button data-pmode="1">Flow setpoint</button>
+          </div>
+          <div id="pumpManual">
+            <label class="lbl">Speed <b id="lblPumpCmd">0</b>%</label>
+            <input type="range" id="rngPump" min="0" max="100" step="1" value="0">
+            <div class="btn-row">
+              <button class="btn" data-pump="0">Stop</button>
+              <button class="btn" data-pump="30">30%</button>
+              <button class="btn" data-pump="60">60%</button>
+              <button class="btn" data-pump="100">100%</button>
+            </div>
+          </div>
+          <div id="pumpFlow" class="hidden">
+            <label class="lbl">Flow setpoint (L/min)</label>
+            <div class="inline">
+              <input type="number" id="numFlowSp" min="0" max="30" step="0.1" value="2.0">
+              <button class="btn btn-primary" id="btnFlowSp">Apply</button>
+              <button class="btn" data-pump="0">Stop</button>
+            </div>
+          </div>
+          <div class="meter-row">
+            <div class="meter"><span>Actual</span><div class="bar"><i id="barPump"></i></div><b id="lblPumpAct">0%</b></div>
+            <div class="meter"><span>Flow</span><div class="bar flow"><i id="barFlow"></i></div><b id="lblFlowAct">0.00</b></div>
+          </div>
         </div>
-        <div class="stat-row">
-          <span class="stat-label">Heat Exchanged (Q_hot):</span>
-          <span id="valQHot" class="stat-val val-accent">-- kW</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Cold Absorption (Q_cold):</span>
-          <span id="valQCold" class="stat-val val-cold">-- kW</span>
-        </div>
-        <div class="stat-row">
-          <span class="stat-label">Log Mean Temp Diff (LMTD):</span>
-          <span id="valLmtd" class="stat-val val-warn">-- °C</span>
+
+        <!-- Cold-side pump -->
+        <div class="card">
+          <div class="card-h"><h2>Pump · cold loop</h2><span id="lblColdPumpState" class="pill">STOPPED</span></div>
+          <div class="seg seg-wide" id="segColdPumpMode">
+            <button data-cpmode="0" class="active">Manual speed</button>
+            <button data-cpmode="1">Flow setpoint</button>
+          </div>
+          <div id="coldPumpManual">
+            <label class="lbl">Speed <b id="lblColdPumpCmd">0</b>%</label>
+            <input type="range" id="rngColdPump" min="0" max="100" step="1" value="0">
+            <div class="btn-row">
+              <button class="btn" data-cpump="0">Stop</button>
+              <button class="btn" data-cpump="30">30%</button>
+              <button class="btn" data-cpump="60">60%</button>
+              <button class="btn" data-cpump="100">100%</button>
+            </div>
+          </div>
+          <div id="coldPumpFlow" class="hidden">
+            <label class="lbl">Flow setpoint (L/min)</label>
+            <div class="inline">
+              <input type="number" id="numColdFlowSp" min="0" max="30" step="0.1" value="2.0">
+              <button class="btn btn-primary" id="btnColdFlowSp">Apply</button>
+              <button class="btn" data-cpump="0">Stop</button>
+            </div>
+          </div>
+          <div class="meter-row">
+            <div class="meter"><span>Actual</span><div class="bar"><i id="barColdPump"></i></div><b id="lblColdPumpAct">0%</b></div>
+            <div class="meter"><span>Flow</span><div class="bar flow"><i id="barColdFlow"></i></div><b id="lblColdFlowAct">0.00</b></div>
+          </div>
         </div>
       </div>
 
-      <!-- Pump & Heater Actuator Control -->
-      <div class="card">
-        <h2><span>⚙️ Actuator Controls</span></h2>
-        <!-- Pump -->
-        <div class="control-group">
-          <label>WATER PUMP SPEED: <span id="lblPumpPct" style="color:#fff;font-weight:bold;">0%</span></label>
-          <div class="slider-row">
-            <input type="range" id="rngPump" min="0" max="100" value="0" oninput="updatePumpSlider(this.value)" onchange="sendPumpCmd(this.value)">
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-h"><h2>Heater</h2><span id="lblHeaterState" class="pill">OFF</span></div>
+          <div class="seg seg-wide" id="segHeaterMode">
+            <button data-hmode="0" class="active">Off</button>
+            <button data-hmode="1">Manual</button>
+            <button data-hmode="2">Thermostat</button>
+            <button data-hmode="3">Time-PWM</button>
+            <button data-hmode="4">PID</button>
           </div>
-          <div class="btn-row">
-            <button class="btn" onclick="sendPumpCmd(0)">OFF</button>
-            <button class="btn" onclick="sendPumpCmd(50)">50%</button>
-            <button class="btn" onclick="sendPumpCmd(100)">100%</button>
+          <div class="hm hm-1 hidden">
+            <div class="btn-row">
+              <button class="btn btn-hot" data-hman="1">Relay ON</button>
+              <button class="btn" data-hman="0">Relay OFF</button>
+            </div>
           </div>
+          <div class="hm hm-2 hm-4 hidden">
+            <label class="lbl">Setpoint <b id="lblSp">50.0</b> °C <span class="muted" id="lblCtrlProbe"></span></label>
+            <input type="range" id="rngSp" min="10" max="73" step="0.5" value="50">
+          </div>
+          <div class="hm hm-3 hidden">
+            <label class="lbl">Duty <b id="lblDutyCmd">0</b>% of a 10 s window</label>
+            <input type="range" id="rngDuty" min="0" max="100" step="5" value="0">
+          </div>
+          <div class="meter-row">
+            <div class="meter"><span>Output</span><div class="bar hot"><i id="barDuty"></i></div><b id="lblDutyAct">0%</b></div>
+          </div>
+          <ul class="checklist" id="heaterChecks"></ul>
         </div>
-        <!-- Heater -->
-        <div class="control-group" style="margin-top: 16px; border-top: 1px dashed var(--border); padding-top: 12px;">
-          <label>30A HEATER CONTROL: <span id="lblHeaterState" style="color:#fff;font-weight:bold;">OFF</span></label>
-          <div class="stat-row">
-            <select id="selHeaterMode" onchange="sendHeaterConfig()">
-              <option value="0">MODE: OFF (Safe Lock)</option>
-              <option value="1">MODE: MANUAL ON/OFF</option>
-              <option value="2">MODE: THERMOSTATIC (Setpoint)</option>
-              <option value="3">MODE: TIME-PWM (Slow Proportional)</option>
+
+        <div class="card">
+          <div class="card-h"><h2>Loop tuning</h2><span class="muted">saved to flash</span></div>
+          <div class="form-grid">
+            <label>Heater Kp <small>%/°C</small><input type="number" id="cfgKp" step="0.1"></label>
+            <label>Heater Ki <small>%/°C·s</small><input type="number" id="cfgKi" step="0.005"></label>
+            <label>Heater Kd <small>%·s/°C</small><input type="number" id="cfgKd" step="0.1"></label>
+            <label>Hysteresis <small>°C</small><input type="number" id="cfgHyst" step="0.1" min="0.2" max="5"></label>
+            <label>Control probe
+              <select id="cfgProbe"><option value="0">Hot inlet (Th,in)</option><option value="1">Hot outlet (Th,out)</option><option value="2">Cold inlet (Tc,in)</option><option value="3">Cold outlet (Tc,out)</option></select>
+            </label>
+            <label>Hot flow Kp <small>%/(L/min)</small><input type="number" id="cfgFkp" step="0.5"></label>
+            <label>Hot flow Ki <small>%/(L/min·s)</small><input type="number" id="cfgFki" step="0.5"></label>
+            <label>Cold flow Kp <small>%/(L/min)</small><input type="number" id="cfgFkp2" step="0.5"></label>
+            <label>Cold flow Ki <small>%/(L/min·s)</small><input type="number" id="cfgFki2" step="0.5"></label>
+          </div>
+          <div class="btn-row"><button class="btn btn-primary" id="btnSaveTuning">Save tuning</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= STATUS ================= -->
+    <section id="tab-status" class="tab-panel">
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-h"><h2>System</h2><span id="statOverall" class="pill">--</span></div>
+          <table class="kv" id="statTable"></table>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><h2>Safety</h2><span id="statSafety" class="pill">--</span></div>
+          <div id="statTripBox" class="status-box status-danger hidden">
+            <div><b id="statTripText">TRIPPED</b><div class="small muted">Heater locked out until reset.</div></div>
+            <button class="btn btn-sm" data-action="reset">Reset trip</button>
+          </div>
+          <ul class="status-list" id="statWarnings" aria-live="polite"></ul>
+          <div class="small muted" id="statSafetyExtra"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><h2>Temperature probes</h2><span class="small muted">DS18B20 · 1-Wire</span></div>
+          <div class="probe-row" id="statProbes"></div>
+          <p class="small muted mt">All four DS18B20 probes share one 1-Wire bus on GPIO 4 (D4). Slots are mapped from their ROM codes; if two are physically reversed, use <code>swap_probes a b</code> (e.g. via chat or the REST API).</p>
+        </div>
+
+        <div class="card">
+          <div class="card-h"><h2>Connection &amp; AI</h2><span id="statConn" class="pill">--</span></div>
+          <table class="kv" id="statNet"></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= ASSISTANT ================= -->
+    <section id="tab-assistant" class="tab-panel">
+      <div class="grid grid-chat">
+        <div class="card chat-card">
+          <div class="card-h">
+            <h2>Chat</h2>
+            <label class="switch" title="Run commands proposed by Gemini without asking">
+              <input type="checkbox" id="chkAutoExec"><span></span> Auto-run AI commands
+            </label>
+          </div>
+          <div id="chatLog" class="chat-log" aria-live="polite"></div>
+          <div id="chatTyping" class="typing hidden"><i></i><i></i><i></i> <span id="chatPhase">thinking</span></div>
+          <div class="quick" id="quickPrompts">
+            <button data-q="status">status</button>
+            <button data-q="How is the exchanger performing?">How is it performing?</button>
+            <button data-q="Heat the loop to 55 C with PID and 50% pump">Heat to 55 °C</button>
+            <button data-q="Why is the heater off?">Why is the heater off?</button>
+            <button data-q="help">help</button>
+          </div>
+          <form id="chatForm" class="chat-form">
+            <input type="text" id="chatInput" autocomplete="off" maxlength="500" placeholder="Ask or command, e.g. 'pump 40' or 'what is the UA?'">
+            <button class="btn btn-primary" type="submit">Send</button>
+          </form>
+          <div class="chat-foot"><button class="link" id="btnChatClear">Clear chat</button></div>
+        </div>
+
+        <div class="stack">
+          <div class="card">
+            <div class="card-h"><h2>AI analysis</h2><span id="lblAiScore" class="pill">--/100</span></div>
+            <div id="aiReport" class="ai-box muted">No analysis yet.</div>
+            <div class="btn-row">
+              <button class="btn btn-primary" id="btnAiRun">Analyse now</button>
+              <button class="btn hidden" id="btnAiApply">Apply suggestion</button>
+            </div>
+            <div id="aiStatus" class="small muted"></div>
+          </div>
+          <div class="card">
+            <div class="card-h"><h2>Gemini settings</h2><span id="lblKey" class="small"></span></div>
+            <label class="lbl">API key</label>
+            <div class="inline">
+              <input type="password" id="txtKey" placeholder="Paste key from aistudio.google.com" autocomplete="off">
+              <button class="btn btn-primary" id="btnKey">Save</button>
+            </div>
+            <label class="lbl">Model</label>
+            <select id="selModel">
+              <option value="gemini-3.6-flash">gemini-3.6-flash (stable, recommended)</option>
+              <option value="gemini-3.8-flash">gemini-3.8-flash (newest)</option>
+              <option value="gemini-3.5-flash-lite">gemini-3.5-flash-lite (fastest, cheapest)</option>
+              <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (deep reasoning, slow)</option>
+              <option value="__custom">Custom model id...</option>
             </select>
-          </div>
-          <div class="btn-row" id="grpManualHeater" style="margin-top: 6px;">
-            <button class="btn btn-primary" onclick="sendHeaterManual(true)">HEATER ON</button>
-            <button class="btn" onclick="sendHeaterManual(false)">HEATER OFF</button>
-          </div>
-          <div id="grpThermostatic" style="margin-top: 8px;">
-            <label>Target Temp (°C): <span id="lblTargetTemp" style="color:#fff;">50</span>°C</label>
-            <input type="range" id="rngTargetTemp" min="20" max="72" value="50" oninput="document.getElementById('lblTargetTemp').innerText=this.value" onchange="sendHeaterConfig()">
+            <div class="inline hidden" id="customModelRow">
+              <input type="text" id="txtModel" placeholder="gemini-...">
+              <button class="btn" id="btnModel">Use</button>
+            </div>
+            <label class="lbl">Periodic analysis</label>
+            <select id="selInterval">
+              <option value="0">Off (manual only)</option>
+              <option value="30000">Every 30 s</option>
+              <option value="60000">Every 1 min</option>
+              <option value="300000">Every 5 min</option>
+            </select>
+            <label class="switch block"><input type="checkbox" id="chkClosedLoop"><span></span> AI closed-loop (slew-limited pump %, Time-PWM duty only)</label>
           </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- Live Chart -->
-    <div class="card">
-      <h2><span>📈 Real-Time Thermal Dynamics</span> <span style="font-size:0.75rem;color:#8b949e;">Rolling 60s Profile</span></h2>
-      <canvas id="chartCanvas"></canvas>
-      <div style="display:flex;gap:16px;margin-top:8px;font-size:0.75rem;justify-content:center;flex-wrap:wrap;">
-        <span style="color:var(--hot);">■ Th,in</span>
-        <span style="color:#ff8533;">■ Th,out</span>
-        <span style="color:var(--cold);">■ Tc,in</span>
-        <span style="color:#00ffff;">■ Tc,out</span>
-        <span style="color:var(--flow);">■ Flow (LPM)</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- TAB: GEMINI AI ADVISOR -->
-  <div id="tab-gemini" class="tab-content">
-    <div class="grid">
+    <!-- ================= DATA ================= -->
+    <section id="tab-data" class="tab-panel">
       <div class="card">
-        <h2><span>🤖 Google Gemini AI Edge Integration</span></h2>
-        <div class="control-group">
-          <label>Google Gemini API Key: <span id="lblKeyStatus" style="font-size:0.75rem;color:var(--safe);"></span></label>
-          <div style="display:flex;gap:8px;">
-            <input type="password" id="txtGeminiKey" placeholder="AIzaSy...">
-            <button class="btn btn-primary" onclick="saveGeminiKey()">Save Key</button>
-          </div>
-        </div>
-        <div class="control-group">
-          <label>Gemini AI Model:</label>
-          <select id="selAiModel" onchange="saveAiModel()">
-            <option value="gemini-2.0-flash">Gemini 2.0 Flash (Low Latency ~1s - Recommended)</option>
-            <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Thermodynamic Reasoning)</option>
-            <option value="gemini-1.5-pro">Gemini 1.5 Pro (High Accuracy Analytical Model)</option>
-            <option value="gemini-1.5-flash">Gemini 1.5 Flash (Lightweight Telemetry)</option>
-          </select>
-        </div>
-        <div class="control-group">
-          <label>Auto-Analysis Interval:</label>
-          <select id="selAiInterval" onchange="saveAiInterval()">
-            <option value="0">Disabled (Manual Only)</option>
-            <option value="30000">Every 30 Seconds</option>
-            <option value="60000">Every 1 Minute</option>
-            <option value="120000">Every 2 Minutes</option>
-          </select>
-        </div>
-        <div class="control-group">
-          <label>
-            <input type="checkbox" id="chkAiClosedLoop" onchange="toggleAiClosedLoop()">
-            Enable Autonomous Closed-Loop Tuning (AI applies pump & heater setpoints within safety limits)
-          </label>
-        </div>
+        <div class="card-h"><h2>Data logger</h2><span class="muted">1 Hz ring buffer in RAM</span></div>
+        <div class="meter"><span>Samples</span><div class="bar"><i id="barLog"></i></div><b id="lblLog">0 / 600</b></div>
+        <p class="small muted">Columns: time, 4 temperatures, hot &amp; cold flow, Q<sub>hot</sub>, Q<sub>cold</sub>, LMTD, UA, ε, hot &amp; cold pump %, heater duty, relay state, source (HW/SIM).</p>
         <div class="btn-row">
-          <button class="btn btn-primary" onclick="triggerGeminiQuery()">Run AI Thermodynamic Analysis Now</button>
+          <a class="btn btn-primary" href="/api/export.csv" download>Download CSV</a>
+          <button class="btn" id="btnLogClear">Clear buffer</button>
         </div>
       </div>
+    </section>
 
-      <div class="card">
-        <h2><span>🧠 Latest AI Diagnostic Report</span> <span id="lblAiScore" class="val-accent">Score: --/100</span></h2>
-        <div class="ai-box">
-          <div id="aiAnalysisText">No AI evaluation performed yet. Connect to Station Wi-Fi with internet and click 'Run AI Analysis'.</div>
-          <div class="ai-rec" id="aiRecText"></div>
-          <div id="aiWarningText" style="color:var(--danger);margin-top:6px;"></div>
+    <!-- ================= SETTINGS ================= -->
+    <section id="tab-settings" class="tab-panel">
+      <div class="grid grid-2">
+        <div class="card">
+          <div class="card-h"><h2>Simulation</h2><span id="lblSimState" class="pill">--</span></div>
+          <p class="small muted">Runs a virtual plant (2 kW heater, 3 kg tank, counter-flow exchanger, two pumps) driven by the real controllers. In <b>Auto</b> the virtual plant also takes over whenever a hardware fault is present and returns to real hardware once it clears. Physical outputs stay off while simulating.</p>
+          <div class="seg seg-wide" id="segSim">
+            <button data-sim="0">Off</button>
+            <button data-sim="2">Auto (fault-tolerant)</button>
+            <button data-sim="1">On</button>
+          </div>
+          <label class="lbl">Inject faults (simulation only)</label>
+          <div class="checks">
+            <label class="switch"><input type="checkbox" data-fault="1"><span></span> Hot flow blocked</label>
+            <label class="switch"><input type="checkbox" data-fault="8"><span></span> Cold flow blocked</label>
+            <label class="switch"><input type="checkbox" data-fault="2"><span></span> Th,in probe lost</label>
+            <label class="switch"><input type="checkbox" data-fault="4"><span></span> Relay welded</label>
+          </div>
         </div>
-        <div class="btn-row" style="margin-top:12px;">
-          <button class="btn btn-warn" id="btnApplyAi" style="display:none;" onclick="applyAiRecommendation()">Apply Suggested Setpoints</button>
-        </div>
-      </div>
-    </div>
-  </div>
 
-  <!-- TAB: LOGGING -->
-  <div id="tab-logging" class="tab-content">
-    <div class="card">
-      <h2><span>💾 Experimental CSV Data Logging</span></h2>
-      <p style="font-size:0.85rem;color:#8b949e;margin-bottom:12px;">The ESP32 logs live thermodynamic measurements into a circular RAM buffer at 1 Hz.</p>
-      <div class="stat-row">
-        <span class="stat-label">Logged Samples:</span>
-        <span id="lblLogCount" class="stat-val">0 / 600</span>
-      </div>
-      <div class="btn-row" style="margin-top:16px;">
-        <button class="btn btn-primary" onclick="window.open('/api/export.csv')">Download CSV Dataset</button>
-        <button class="btn" onclick="clearLogData()">Reset Logger Buffer</button>
-      </div>
-    </div>
-  </div>
+        <div class="card">
+          <div class="card-h"><h2>Wi-Fi station</h2><span id="lblSta" class="pill">--</span></div>
+          <div class="inline">
+            <input type="text" id="txtSsid" placeholder="Network SSID" list="ssidList">
+            <button class="btn" id="btnScan">Scan</button>
+          </div>
+          <datalist id="ssidList"></datalist>
+          <input type="password" id="txtPass" placeholder="Password" class="mt">
+          <div class="btn-row"><button class="btn btn-primary" id="btnWifi">Connect &amp; save</button></div>
+        </div>
 
-  <!-- TAB: SETTINGS -->
-  <div id="tab-settings" class="tab-content">
-    <div class="grid">
-      <div class="card">
-        <h2><span>📶 Wi-Fi Station Configuration</span></h2>
-        <div class="control-group">
-          <label>Station Network SSID:</label>
-          <input type="text" id="txtWifiSsid" placeholder="Home or Lab Network">
+        <div class="card">
+          <div class="card-h"><h2>Calibration</h2></div>
+          <div class="form-grid">
+            <label>Hot flow K-factor <small>Hz per L/min</small><input type="number" id="cfgK" step="0.1"></label>
+            <label>Cold flow K-factor <small>Hz per L/min</small><input type="number" id="cfgColdK" step="0.1"></label>
+            <label>Hot pump min duty <small>% (dead band)</small><input type="number" id="cfgPmin" min="0" max="80" step="1"></label>
+            <label>Cold pump min duty <small>% (dead band)</small><input type="number" id="cfgColdPmin" min="0" max="80" step="1"></label>
+          </div>
+          <div class="btn-row"><button class="btn btn-primary" id="btnSaveCal">Save calibration</button></div>
         </div>
-        <div class="control-group">
-          <label>Network Password:</label>
-          <input type="password" id="txtWifiPass" placeholder="Password">
-        </div>
-        <div class="btn-row">
-          <button class="btn btn-primary" onclick="saveWifiCredentials()">Connect & Save</button>
+
+        <div class="card">
+          <div class="card-h"><h2>System</h2></div>
+          <table class="kv" id="sysTable"></table>
         </div>
       </div>
+    </section>
+  </main>
 
-      <div class="card">
-        <h2><span>⚙️ Calibration & Safety Overrides</span></h2>
-        <div class="control-group">
-          <label>Flow Meter K-Factor (Hz / LPM):</label>
-          <input type="number" id="txtKFactor" step="0.1" value="7.5">
-        </div>
-        <div class="btn-row">
-          <button class="btn btn-primary" onclick="saveCalibration()">Save Calibration</button>
-          <button class="btn btn-warn" onclick="resetSafetyTrip()">Clear Safety Alarm</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
+  <div id="toasts" class="toasts" aria-live="polite"></div>
   <script src="app.js"></script>
 </body>
 </html>

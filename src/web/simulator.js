@@ -115,35 +115,47 @@
   heater.lastPidT = now();
 
   var log = [];
-  var chatRev = 0, chatMsgs = [];
+  var chatRev = 0, chatEpoch = 0, chatMsgs = [];
 
   // =====================================================================
-  // Gemini (browser -> Google directly; key stays in localStorage)
+  // Gemini (browser -> Google directly)
+  //   - key: baked into the page via window.HX_SITE_CONFIG (shared by every
+  //     visitor, set once at build time) else this browser's localStorage
+  //   - chat replies stream token-by-token via :streamGenerateContent?alt=sse
   // =====================================================================
+  var SITE = (typeof window !== 'undefined' && window.HX_SITE_CONFIG) || {};
   var AI_STORE = 'hx_sim_ai';
   var ai = {
     key: '', model: 'gemini-3.6-flash', auto: false, interval: 60000,
-    closed: false, chatAuto: false,
-    busy: false, phase: '', lastError: 'OK', latency: 0, requests: 0, errors: 0,
+    closed: false, chatAuto: false, sharedKey: false,
+    busy: false, phase: '', streaming: false, lastError: 'OK', latency: 0, requests: 0, errors: 0,
     lastAuto: now(), seq: 0, rec: null
   };
   var appliedSeq = 0;
 
   function loadAi() {
+    var savedModel = false;
     try {
       var s = JSON.parse(localStorage.getItem(AI_STORE) || '{}');
       if (typeof s.key === 'string') ai.key = s.key;
-      if (typeof s.model === 'string' && s.model) ai.model = s.model;
+      if (typeof s.model === 'string' && s.model) { ai.model = s.model; savedModel = true; }
       ai.auto = !!s.auto;
       ai.closed = !!s.closed;
       ai.chatAuto = !!s.chatAuto;
       if (typeof s.interval === 'number' && s.interval > 0) ai.interval = s.interval;
     } catch (e) { /* localStorage unavailable */ }
+    // A key baked into the page is shared by everybody and wins over anything
+    // saved in this browser.
+    if (typeof SITE.apiKey === 'string' && SITE.apiKey.trim().length >= 20) {
+      ai.key = SITE.apiKey.trim();
+      ai.sharedKey = true;
+    }
+    if (!savedModel && typeof SITE.model === 'string' && SITE.model) ai.model = SITE.model;
   }
   function saveAi() {
     try {
       localStorage.setItem(AI_STORE, JSON.stringify({
-        key: ai.key, model: ai.model, auto: ai.auto, interval: ai.interval,
+        key: ai.sharedKey ? '' : ai.key, model: ai.model, auto: ai.auto, interval: ai.interval,
         closed: ai.closed, chatAuto: ai.chatAuto
       }));
     } catch (e) { /* ignore */ }
@@ -232,8 +244,10 @@
 
   function addMsg(role, text, cmds) {
     var m = { id: ++chatRev, role: role, text: text, commands: cmds || [],
-              executed: false, results: '', timeSec: Math.floor((now() - simStart) / 1000) };
+              executed: false, results: '', streaming: false,
+              timeSec: Math.floor((now() - simStart) / 1000) };
     chatMsgs.push(m);
+    chatEpoch++;
     if (chatMsgs.length > 40) chatMsgs = chatMsgs.slice(-40);
     return m;
   }
@@ -279,7 +293,7 @@
     return { ok: allOk, message: m.results };
   }
 
-  function handleChatResult(o) {
+  function handleChatResult(o, m) {
     var reply = o && o.reply ? String(o.reply) : '(no reply)';
     var cmds = [];
     if (o && Array.isArray(o.commands)) {
@@ -287,7 +301,11 @@
         if (c && c.action) cmds.push({ action: String(c.action), value: Number(c.value) || 0, arg: String(c.arg || '') });
       });
     }
-    var m = addMsg('assistant', reply, cmds);
+    if (m && chatMsgs.indexOf(m) >= 0) {
+      m.text = reply; m.commands = cmds; m.streaming = false; chatEpoch++;
+    } else {
+      m = addMsg('assistant', reply, cmds);
+    }
     if (ai.chatAuto && cmds.length) executeMsg(m);
   }
 
@@ -339,10 +357,80 @@
     if (ai.closed) applyClosedLoop(ai.rec, ai.seq);
   }
 
-  function geminiRequest(job, userText) {
+  // Pulls the value of a JSON string field out of a (possibly truncated) JSON
+  // document so a streamed reply can be shown while the model is still writing.
+  function extractJsonStringField(text, field) {
+    var key = '"' + field + '"';
+    var i = text.indexOf(key);
+    if (i < 0) return null;
+    i = text.indexOf(':', i + key.length);
+    if (i < 0) return null;
+    i++;
+    while (i < text.length && /\s/.test(text[i])) i++;
+    if (i >= text.length || text[i] !== '"') return null;
+    i++;
+    var out = '';
+    while (i < text.length) {
+      var c = text[i];
+      if (c === '\\') {
+        var n = text[i + 1];
+        if (n === undefined) break;
+        if (n === 'n') out += '\n';
+        else if (n === 't') out += '\t';
+        else if (n === 'r') out += '\r';
+        else if (n === 'b') out += '\b';
+        else if (n === 'f') out += '\f';
+        else if (n === 'u') {
+          var hex = text.substr(i + 2, 4);
+          if (hex.length < 4) break;
+          out += String.fromCharCode(parseInt(hex, 16));
+          i += 4;
+        } else out += n;
+        i += 2;
+      } else if (c === '"') {
+        break;
+      } else {
+        out += c; i++;
+      }
+    }
+    return out;
+  }
+
+  // Reads a Gemini SSE stream, accumulating the model text and reporting it
+  // after every chunk so the UI can render it progressively.
+  function readSse(res, onText) {
+    var reader = res.body.getReader();
+    var dec = new TextDecoder('utf-8');
+    var buf = '', full = '';
+    function pump() {
+      return reader.read().then(function (r) {
+        if (r.done) { onText(full); return full; }
+        buf += dec.decode(r.value, { stream: true });
+        var lines = buf.split('\n');
+        buf = lines.pop();
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i].trim();
+          if (line.indexOf('data:') !== 0) continue;
+          var data = line.slice(5).trim();
+          if (!data || data === '[DONE]') continue;
+          var o;
+          try { o = JSON.parse(data); } catch (e) { continue; }
+          var parts = (o.candidates && o.candidates[0] && o.candidates[0].content &&
+                       o.candidates[0].content.parts) || [];
+          for (var p = 0; p < parts.length; p++) if (!parts[p].thought) full += (parts[p].text || '');
+        }
+        onText(full);
+        return pump();
+      });
+    }
+    return pump();
+  }
+
+  function geminiRequest(job, userText, streamMsg) {
     if (!aiHasKey()) { ai.lastError = 'Gemini API key is not set (Assistant tab)'; return; }
     if (ai.busy) return;
-    ai.busy = true; ai.phase = 'waiting for model'; ai.lastError = 'OK';
+    var stream = job === 'chat';
+    ai.busy = true; ai.phase = 'waiting for model'; ai.lastError = 'OK'; ai.streaming = stream;
     var t0 = now();
     var user = job === 'chat'
       ? 'LIVE TELEMETRY:\n' + aiContext() + '\n\nOPERATOR MESSAGE:\n' + userText
@@ -357,13 +445,20 @@
       }
     };
     var url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
-              encodeURIComponent(ai.model) + ':generateContent';
+              encodeURIComponent(ai.model) + (stream ? ':streamGenerateContent?alt=sse' : ':generateContent');
     realFetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': ai.key },
       body: JSON.stringify(payload)
     }).then(function (res) {
       ai.phase = 'reading';
+      if (stream && res.ok && res.body && res.body.getReader) {
+        return readSse(res, function (text) {
+          if (!streamMsg || chatMsgs.indexOf(streamMsg) < 0) return;
+          var partial = extractJsonStringField(text, 'reply');
+          if (partial != null && partial !== streamMsg.text) { streamMsg.text = partial; chatEpoch++; }
+        }).then(function (text) { return { ok: true, status: res.status, modelText: text }; });
+      }
       return res.text().then(function (txt) { return { ok: res.ok, status: res.status, txt: txt }; });
     }).then(function (r) {
       ai.latency = Math.round(now() - t0);
@@ -376,19 +471,27 @@
         } catch (x) { /* not JSON */ }
         throw new Error(msg);
       }
-      var data = JSON.parse(r.txt);
-      var text = '';
-      var parts = (data.candidates && data.candidates[0] && data.candidates[0].content &&
-                   data.candidates[0].content.parts) || [];
-      for (var i = 0; i < parts.length; i++) if (!parts[i].thought) text += (parts[i].text || '');
-      var obj = JSON.parse(text);
+      var modelText = r.modelText;
+      if (modelText == null) {
+        var data = JSON.parse(r.txt);
+        modelText = '';
+        var parts = (data.candidates && data.candidates[0] && data.candidates[0].content &&
+                     data.candidates[0].content.parts) || [];
+        for (var i = 0; i < parts.length; i++) if (!parts[i].thought) modelText += (parts[i].text || '');
+      }
+      var obj = JSON.parse(modelText);
       ai.lastError = 'OK';
-      if (job === 'chat') handleChatResult(obj); else handleAnalysisResult(obj);
+      if (job === 'chat') handleChatResult(obj, streamMsg); else handleAnalysisResult(obj);
     }).catch(function (e) {
       ai.errors++;
       ai.lastError = String((e && e.message) || e);
+      if (streamMsg && chatMsgs.indexOf(streamMsg) >= 0) {
+        streamMsg.text = 'AI request failed: ' + ai.lastError;
+        streamMsg.streaming = false;
+        chatEpoch++;
+      }
     }).then(function () {
-      ai.busy = false; ai.phase = '';
+      ai.busy = false; ai.phase = ''; ai.streaming = false;
     });
   }
 
@@ -435,12 +538,23 @@
       addMsg('system', 'AI unavailable: Gemini API key is not set. Offline commands still work - type help.', []);
       return { ok: true, message: 'Received' };
     }
-    geminiRequest('chat', text);
+    if (ai.busy) {
+      addMsg('system', 'Gemini is still working on the previous request.', []);
+      return { ok: true, message: 'Received' };
+    }
+    // Empty assistant placeholder that fills in as the reply streams back.
+    var m = addMsg('assistant', '', []);
+    m.streaming = true;
+    chatEpoch++;
+    geminiRequest('chat', text, m);
     return { ok: true, message: 'Received' };
   }
 
   function applyAiConfig(b) {
-    if (typeof b.api_key === 'string') { ai.key = b.api_key.trim(); ai.lastAuto = now(); }
+    if (typeof b.api_key === 'string') {
+      if (ai.sharedKey) return { ok: false, message: 'The API key is set by the site configuration and is shared by everyone' };
+      ai.key = b.api_key.trim(); ai.lastAuto = now();
+    }
     if (typeof b.model === 'string') {
       if (!/^gemini-[\w.\-]+$/.test(b.model)) return { ok: false, message: 'Invalid model id (expected e.g. gemini-2.5-flash)' };
       ai.model = b.model;
@@ -457,17 +571,18 @@
   }
 
   function chatGet() {
-    return { rev: chatRev, busy: ai.busy, phase: ai.phase, auto_exec: ai.chatAuto, messages: chatMsgs };
+    return { rev: chatEpoch, busy: ai.busy, phase: ai.phase, auto_exec: ai.chatAuto, messages: chatMsgs };
   }
 
   function aiTelemetry() {
     var o = {
       model: ai.model, has_key: aiHasKey(),
       key_hint: aiHasKey() ? '...' + ai.key.slice(-4) : '',
+      shared_key: ai.sharedKey, streams: true, streaming: ai.streaming,
       auto_enabled: ai.auto, interval_ms: ai.interval, closed_loop: ai.closed,
       chat_auto_exec: ai.chatAuto, busy: ai.busy, phase: ai.phase,
       last_error: ai.lastError, latency_ms: ai.latency, requests: ai.requests,
-      errors: ai.errors, chat_rev: chatRev,
+      errors: ai.errors, chat_rev: chatEpoch,
       unavailable: aiHasKey() ? '' : 'Gemini API key is not set (Assistant tab)',
       has_rec: !!ai.rec
     };
@@ -893,7 +1008,7 @@
       var er = executeMsg(target);
       return R(er, er.ok ? 200 : 409);
     }
-    if (u.indexOf('/api/chat/clear') >= 0) { chatMsgs = []; chatRev++; return R({ ok: true, message: 'Chat cleared' }); }
+    if (u.indexOf('/api/chat/clear') >= 0) { chatMsgs = []; chatRev++; chatEpoch++; return R({ ok: true, message: 'Chat cleared' }); }
     if (u.indexOf('/api/chat') >= 0) {
       if (method === 'POST') return R(handleChat(parseBody(opts).message || ''));
       return R(chatGet());

@@ -39,3 +39,7 @@ venv/
 *.bak
 .DS_Store
 Thumbs.db
+
+# Hosted dashboard shared site config - may contain a Gemini API key.
+# Template: src/web/site.config.example.js
+src/web/site.config.js

@@ -293,8 +293,9 @@ function renderChat(msgs) {
   }
   msgs.forEach((m) => {
     const d = document.createElement('div');
-    d.className = 'msg ' + m.role;
+    d.className = 'msg ' + m.role + (m.streaming ? ' streaming' : '');
     d.textContent = m.text;
+    if (m.streaming && !m.text) d.textContent = '…';
     if (m.commands && m.commands.length) {
       const c = document.createElement('div');
       c.className = 'cmds';
@@ -336,9 +337,24 @@ async function loadChat() {
   chatRev = r.rev;
   chatBusy = r.busy;
   renderChat(r.messages || []);
-  $('chatTyping').classList.toggle('hidden', !r.busy);
+  // Hide the typing dots once streamed text is already on screen.
+  const hasStreamText = (r.messages || []).some((m) => m.streaming && m.text);
+  $('chatTyping').classList.toggle('hidden', !r.busy || hasStreamText);
   $('chatPhase').textContent = r.phase || 'thinking';
   if (!isTouched('ax')) $('chkAutoExec').checked = !!r.auto_exec;
+}
+
+// While a reply is streaming, refresh the chat log faster than the 1 s
+// telemetry poll so tokens appear smoothly.
+let streamTimer = null;
+function scheduleStreamPoll() {
+  if (streamTimer) return;
+  streamTimer = setTimeout(async () => {
+    streamTimer = null;
+    if (!(T && T.ai && T.ai.streams && T.ai.busy)) return;
+    await loadChat();
+    scheduleStreamPoll();
+  }, 150);
 }
 
 // ======================================================================
@@ -690,8 +706,26 @@ function render(d) {
   if (!$('txtSsid').value && d.net.ssid && document.activeElement !== $('txtSsid')) $('txtSsid').value = d.net.ssid;
 
   // ---- AI ----
-  $('lblKey').textContent = ai.has_key ? '✓ key ' + ai.key_hint : '⚠ no key';
+  $('lblKey').textContent = ai.shared_key
+    ? '✓ shared key ' + ai.key_hint
+    : (ai.has_key ? '✓ key ' + ai.key_hint : '⚠ no key');
   $('lblKey').style.color = ai.has_key ? 'var(--ok)' : 'var(--warn)';
+  const keyShared = !!ai.shared_key;
+  if ($('txtKey').disabled !== keyShared) {
+    $('txtKey').disabled = keyShared;
+    $('btnKey').disabled = keyShared;
+    $('txtKey').placeholder = keyShared
+      ? 'Set by the site and shared with every visitor'
+      : 'Paste key from aistudio.google.com';
+  }
+  $('keyHint').textContent = ai.shared_key
+    ? 'A shared key is built into this page, so every visitor uses it automatically. Replies stream back as they are generated.'
+    : ai.streams
+      ? (ai.has_key ? 'Stored in this browser only. Replies stream back as they are generated.'
+                    : 'Paste a key to enable the assistant; it is kept in this browser only.')
+      : (ai.has_key ? 'Stored on the controller and shared with every client.'
+                    : 'Paste a key to enable the assistant; it is stored on the controller and shared with every client.');
+  if (ai.streams && ai.busy) scheduleStreamPoll();
   if (!isTouched('model')) {
     const known = qsa('#selModel option').some((o) => o.value === ai.model);
     $('selModel').value = known ? ai.model : '__custom';

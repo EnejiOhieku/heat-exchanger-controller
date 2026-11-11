@@ -213,7 +213,12 @@ The dashboard can also run entirely in a browser with no ESP32 attached. `src/we
 
 It boots into a running example (heater PID to 50 °C, hot pump 60 %, cold pump 50 %) so it produces data immediately. Change setpoints, inject faults and download the CSV exactly as on the real rig.
 
-**Gemini in the browser:** the Assistant tab works on the hosted page too. It calls the Generative Language API directly from your browser with the key you paste, and stores that key in this browser's `localStorage` — it is never committed to the repo. In Google Cloud Console, restrict the key to the *Generative Language API* and (ideally) to the `https://enejiohieku.github.io` HTTP referrer. If the default model id is not available to your key, choose **Custom model id** and enter one you can access. Chat, "Analyse now" and the optional closed loop all run client-side; the AI still cannot reset a trip.
+**Gemini in the browser:** the Assistant tab works on the hosted page too. It calls the Generative Language API directly from the browser and **streams chat replies back token-by-token** (`:streamGenerateContent` SSE), so answers appear as they are written. The API key can be shared by everybody in one of two ways:
+
+- **Baked into the page (shared by every visitor):** copy `src/web/site.config.example.js` to `src/web/site.config.js`, paste a key, and rebuild. `site.config.js` is gitignored, but the built `docs/index.html` then contains the key in plain text - that is what lets one key serve everyone with no per-browser paste. Restrict the key in Google Cloud Console to the *Generative Language API* and to your site's HTTP referrer, and only bake a key you are willing to expose. Instead of a file you can pass it at build time: `HX_GEMINI_API_KEY=AIza... python3 src/web/build_site.py` or `python3 src/web/build_site.py --api-key AIza... --model gemini-3.6-flash`. When a shared key is active the key field is locked and the key is never copied into `localStorage`.
+- **Per-browser:** if no key is baked in, each visitor pastes their own and it is stored in that browser's `localStorage` - it is never committed to the repo.
+
+If the default model id is not available to your key, choose **Custom model id** and enter one you can access. Chat, "Analyse now" and the optional closed loop all run client-side; the AI still cannot reset a trip.
 
 **Build the site**
 
@@ -229,17 +234,20 @@ python3 -m http.server -d docs
 # open http://localhost:8000
 ```
 
-**Publish with GitHub Pages (easiest)**
+**Publish with GitHub Pages**
 
-The repository is public, so Pages is free and needs no build action:
+Option A - **key from a repository secret (no key in git)**: commit the workflow `.github/workflows/deploy-pages.yml` (already in this repo), then
 
-1. Commit and push `docs/` to `main`.
-2. GitHub → **Settings → Pages**.
-3. **Source:** *Deploy from a branch*.
-4. **Branch:** `main`, **Folder:** `/docs` → **Save**.
-5. After a minute: `https://enejiohieku.github.io/heat-exchanger-controller/`
+1. GitHub -> **Settings -> Secrets and variables -> Actions** -> **New repository secret**: `GEMINI_API_KEY` = your key. Optionally add a **variable** `GEMINI_MODEL` (e.g. `gemini-3.6-flash`).
+2. GitHub -> **Settings -> Pages** -> **Source: GitHub Actions** (not "Deploy from a branch").
+3. Push to `main` (or run *Deploy hosted dashboard* manually). The workflow rebuilds `docs/index.html` with the key injected from the secret and publishes it, so `docs/index.html` in git stays keyless.
+4. After a minute: `https://enejiohieku.github.io/heat-exchanger-controller/`
 
-Because `docs/index.html` is committed as a ready-made static page, there is no CI step. Re-run `build_site.py` and commit `docs/` whenever `src/web/*` changes.
+> A secret only hides the key from the repository, **not from visitors**: Pages serves `index.html` publicly, so the key is still readable in the page. GitHub masks it in workflow logs, and rotating it is just editing the secret and re-running the workflow. If the key must not be public at all, put a small proxy (e.g. a Cloudflare Worker) in front of Gemini and keep the secret there instead.
+
+Option B - **deploy from the branch**: **Source** -> *Deploy from a branch*, branch `main`, folder `/docs`. This needs no CI, but the committed page must already contain the key (bake it locally via `site.config.js` and commit `docs/`). Re-run `build_site.py` and commit `docs/` whenever `src/web/*` changes - and remember that commits keep the key in git history.
+
+If neither a secret nor a baked key is present, the page simply asks each visitor for their own key and keeps it in their browser.
 
 **Or use your portfolio site**
 

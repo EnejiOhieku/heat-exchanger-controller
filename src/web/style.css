@@ -237,6 +237,8 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid color-mix(i
 .msg .cmds { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .msg .cmd { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; }
 .msg .res { margin-top: 6px; font-size: 11px; color: var(--muted); }
+.msg.streaming { opacity: .96; }
+.msg.streaming::after { content: "▍"; margin-left: 2px; color: var(--accent); animation: blink 1s steps(2, start) infinite; }
 .typing { font-size: 12px; color: var(--muted); padding: 2px 4px 6px; display: flex; gap: 3px; align-items: center; }
 .typing i { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); animation: blink 1.2s infinite; }
 .typing i:nth-child(2) { animation-delay: .2s; }

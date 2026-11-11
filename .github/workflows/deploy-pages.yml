@@ -1,0 +1,71 @@
+name: Deploy hosted dashboard
+
+# Builds docs/index.html with a shared Gemini key taken from the repository
+# secret GEMINI_API_KEY, then publishes it with GitHub Pages.
+#
+# The secret is only readable inside this workflow; the built page is public and
+# DOES contain the key. Restrict it in Google Cloud Console (Generative Language
+# API + your Pages HTTP referrer) and treat it as a rotate-at-will key.
+#
+# Setup:
+#   1. Settings -> Secrets and variables -> Actions -> New repository secret
+#      GEMINI_API_KEY = <your key>
+#      (optional) Variables -> New repository variable
+#      GEMINI_MODEL   = gemini-3.6-flash
+#   2. Settings -> Pages -> Build and deployment -> Source: GitHub Actions
+#      (do not leave it on "Deploy from a branch", or this workflow is ignored)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build dashboard
+        env:
+          HX_GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          HX_GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+        run: |
+          if [ -z "$HX_GEMINI_API_KEY" ]; then
+            echo "::warning::GEMINI_API_KEY secret is not set - the page will ask each visitor for their own key."
+          fi
+          python3 src/web/build_site.py
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
